@@ -82,9 +82,9 @@ if(WIN32)
   windeployqt(${PROJECT_NAME} ${BIN_INSTALL_DIR})
 endif()
 
-# if(APPLE)
-#   include(Macdeployqt)
-#   macdeployqt(${PROJECT_NAME})
-# endif()
+if(APPLE)
+  include(Macdeployqt)
+  macdeployqt(${PROJECT_NAME})
+endif()
 
 include(FriteCPack)
