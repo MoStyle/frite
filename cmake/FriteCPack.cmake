@@ -1,0 +1,25 @@
+set(CPACK_PACKAGE_NAME "frite")
+set(CPACK_PACKAGE_VERSION_MAJOR ${frite_VERSION_MAJOR})
+set(CPACK_PACKAGE_VERSION_MINOR ${frite_VERSION_MINOR})
+set(CPACK_PACKAGE_VERSION_PATCH ${frite_VERSION_PATCH})
+set(CPACK_PACKAGE_VERSION ${frite_VERSION})
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "frite")
+set(CPACK_PACKAGE_VENDOR "Inria")
+set(CPACK_PACKAGE_DESCRIPTION "frite")
+
+if(APPLE)
+    set(CPACK_BUNDLE_NAME "frite")
+    set(CPACK_BUNDLE_PLIST "${MACOSX_BUNDLE_CONTENTS}/Info.plist")
+    set(CPACK_PACKAGE_ICON "${PROJECT_SOURCE_DIR}/src/images/${MACOSX_BUNDLE_ICON_FILE}")
+    set(CPACK_BUNDLE_ICON "${CPACK_PACKAGE_ICON}")
+endif()
+
+set(CPACK_PACKAGE_EXECUTABLES "frite" "frite")
+set(CPACK_CREATE_DESKTOP_LINKS "frite")
+
+configure_file("${CMAKE_CURRENT_LIST_DIR}/FriteCPackOptions.cmake.in"
+    "${frite_BINARY_DIR}/FriteCPackOptions.cmake" @ONLY)
+set(CPACK_PROJECT_CONFIG_FILE
+    "${frite_BINARY_DIR}/FriteCPackOptions.cmake")
+
+include(CPack)

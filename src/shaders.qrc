@@ -1,0 +1,9 @@
+<RCC>
+    <qresource prefix="/" lang="GLSL">
+        <file>shaders/display.frag</file>
+        <file>shaders/display.vert</file>
+        <file>shaders/stroke.vert</file>
+        <file>shaders/stroke.geom</file>
+        <file>shaders/stroke.frag</file>
+    </qresource>
+</RCC>

@@ -1,0 +1,19 @@
+# This file is configured at cmake time, loaded at cpack time.
+
+# NSIS specific settings
+if(CPACK_GENERATOR MATCHES "NSIS")
+  set(CPACK_NSIS_MUI_ICON "@CMAKE_SOURCE_DIR@/src/images/\\\\fries.ico")
+  set(CPACK_NSIS_HELP_LINK "")
+  set(CPACK_NSIS_URL_INFO_ABOUT "")
+  set(CPACK_PACKAGE_EXECUTABLES "frite" "frite")
+  set(CPACK_CREATE_DESKTOP_LINKS "frite")
+  set(CPACK_NSIS_INSTALLED_ICON_NAME "frite.exe")
+  set(CPACK_NSIS_MENU_LINKS "frite.exe" "frite")
+  set(CPACK_NSIS_MODIFY_PATH OFF)
+  set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
+  set(CPACK_NSIS_MUI_FINISHPAGE_RUN "frite.exe")
+endif(CPACK_GENERATOR MATCHES "NSIS")
+
+if("${CPACK_GENERATOR}" STREQUAL "PackageMaker")
+  set(CPACK_PACKAGE_DEFAULT_LOCATION "/Applications")
+endif("${CPACK_GENERATOR}" STREQUAL "PackageMaker")

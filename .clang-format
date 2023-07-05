@@ -1,0 +1,10 @@
+﻿---
+BasedOnStyle: Google
+IndentWidth: 4
+---
+Language: Cpp
+ColumnLimit: 190
+IncludeBlocks: Preserve
+SortIncludes: false
+...
+                                                                                                             

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=frite
+Comment=2D animation software
+Exec=frite %F
+Icon=frite
+Terminal=false
+Type=Application
+Categories=Qt;Graphics;2DGraphics;
