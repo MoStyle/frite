@@ -1,6 +1,6 @@
 # Frite
 
-**Frite** is a non-linear 2D animation software developped as part of the [MoStyle ANR project](https://benardp.github.io/mostyle/) by Melvin Even, Pierre Bénard and Pascal Barla. 
+**Frite** is a non-linear 2D animation software developed as part of the [MoStyle ANR project](https://benardp.github.io/mostyle/) by Melvin Even, Pierre Bénard and Pascal Barla. 
 
 The animation system is described in the following publication:
 
