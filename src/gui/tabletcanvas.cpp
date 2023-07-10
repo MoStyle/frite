@@ -55,6 +55,8 @@ static dkBool k_drawTess("Options->Drawing->Draw tess", false);
 static dkBool k_drawPoints("Options->Drawing->Draw points", false);
 static dkFloat k_thetaEps("Options->Drawing->Stroke drawing smoothness", 0.01, 0.00001, 1.0, 0.00001);
 
+static dkInt k_offset("Options->Draw->Offset", 0, -1000, 1000, 1);
+
 dkBool k_exportOnionSkinMode("Options->Export->Onion skin mode", false);
 dkBool k_exportOnlyKeysMode("Options->Export->Export keys only (onion export)", false);
 dkInt k_exportFrom("Options->Export->Export from", 1, 1, 100, 1);
@@ -109,7 +111,7 @@ void TabletCanvas::resizeGL(int w, int h) {
     m_editor->view()->setCanvasSize(QSize(w, h));
     m_graphicsView->setFixedSize(width(), height());
     m_fixedGraphicsView->setFixedSize(width(), height());
-    m_graphicsScene->setSceneRect(m_canvasRect);
+    m_graphicsScene->setSceneRect(rect());
     m_fixedGraphicsScene->setSceneRect(rect());
     initPixmap();
     int side = std::min(w, h);
@@ -588,15 +590,17 @@ void TabletCanvas::paintGL() {
     StopWatch sw("rendering");
 
     QPainter painter(this);
-    const QTransform &view = m_editor->view()->getView();
+    QTransform view = m_editor->view()->getView();
     QRectF viewRect = painter.viewport();
     QRect boundingRect = m_editor->view()->mapScreenToCanvas(viewRect).toRect();
 
     // TODO only update this on view changed
     QTransform viewTransform = QTransform::fromScale(view.m11(), view.m22());
     QRectF boundingRectView = viewTransform.inverted().mapRect(viewRect);
-    m_graphicsView->setTransform(QTransform::fromTranslate(view.m31(),view.m32()));
-    // m_graphicsScene->setSceneRect(boundingRectView.translated(-(view.m31()), -(view.m32())));
+
+    if (m_editor->scene()->toolItem() != nullptr) {
+        m_editor->scene()->toolItem()->setTransform(view);
+    } 
     m_graphicsScene->update();
 
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);

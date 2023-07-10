@@ -20,12 +20,13 @@ public:
     CanvasSceneManager(QObject *pParent);
     virtual ~CanvasSceneManager();
 
+    QGraphicsItem *toolItem() const { return m_toolItem; }
+
     void setScene(QGraphicsScene *scene);
 
     void selectedGroupChanged(const QHash<int, Group *> &groups);
 
     void selectedTrajectoryChanged(Trajectory *trajectory);
-
 public slots:
     void toolChanged(Tool *newTool);
     void frameChanged(int frame);

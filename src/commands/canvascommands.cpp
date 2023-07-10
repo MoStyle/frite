@@ -543,7 +543,6 @@ void SetSelectedGroupCommand::redo() {
             break;
         }
         newSelection.insert(id, groupList.fromId(id));
-        qDebug() << "Adding group to selection " << id << " -> " << groupList.fromId(id);
     }
 
     // Propagate selection across keyframes if possible (breakdowns)

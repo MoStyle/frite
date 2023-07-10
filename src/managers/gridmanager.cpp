@@ -27,7 +27,7 @@
 
 extern dkSlider k_deformRange;
 static dkBool k_arap("Warp->ARAP", true);
-static dkSlider k_iterationGrid("Warp->Rigidity (#regularization)", 5, 1, 450, 1);
+static dkSlider k_iterationGrid("Warp->Rigidity (#regularization)", 20, 1, 450, 1);
 dkInt k_cellSize("Options->Grid->Cell Size", 16, 1, 64, 1);
 dkBool k_useDeformAsSource("Warp->Plastic deformation", false);
 
