@@ -431,12 +431,46 @@ void GridManager::propagateDeformToConnectedComponent(Lattice *grid, const std::
  * Assume that the newly added one-ring quads are marked true (tmp flag) 
  */
 void GridManager::propagateDeformToOneRing(Lattice *grid, const std::vector<int> &oneRing) {
+    // TODO: this is a dirty fix
+    int neighborQuadOffset[8] = {1, grid->nbCols(), -1, -grid->nbCols(), -grid->nbCols()-1, -grid->nbCols()+1, grid->nbCols()-1, grid->nbCols()+1};
+    for (int quadKey : oneRing) {
+        int x, y;
+        grid->keyToCoord(quadKey, x, y);
+        QuadPtr quad = grid->quad(quadKey);
+        QuadPtr neighbor;
+        Point::Affine origToRef = Point::Affine::Identity();
+        Point::VectorType positions[4] = {Point::VectorType(x, y), Point::VectorType(x + 1, y), Point::VectorType(x + 1, y + 1), Point::VectorType(x, y + 1)};
+        for (int i = 0; i < 8; ++i) {
+            int neighborKey = quadKey + neighborQuadOffset[i];
+            if (neighborKey < 0 || neighborKey > grid->maxQuadKey() || grid->quad(neighborKey) == nullptr || grid->quad(neighborKey)->flag()) continue;
+            origToRef = grid->quadRefTransformation(neighborKey);
+            break;
+        }
+        for (int i = 0; i < NUM_CORNERS; ++i) {
+            Corner *c = quad->corners[i];
+            bool fixed = false;
+            for (int j = 0; j < NUM_CORNERS; ++j) {
+                neighbor = c->quads((CornerIndex)j);
+                if (neighbor != nullptr && !neighbor->flag()) {
+                    fixed = true;
+                    break;
+                }
+            }
+            if (!fixed) {
+                c->coord(REF_POS) = origToRef * (grid->cellSize() * positions[i] + Point::VectorType(grid->origin().x(), grid->origin().y())); 
+            }
+        }
+    }
+    
+
     // TODO: batch this over multiple quads
-    std::array<bool, 4> fixedVertex;
     QuadPtr neighbor;
     QSet<Corner *> newCorners;
+    std::array<bool, 4> fixedVertex;
     for (int quadKey : oneRing) {
         QuadPtr quad = grid->quad(quadKey);
+        int x, y;
+        grid->keyToCoord(quadKey, x, y);
         QSet<Corner *> boundaryCorners;
         // Find boundary corners
         for (int i = 0; i < NUM_CORNERS; ++i) {
@@ -486,6 +520,7 @@ void GridManager::propagateDeformToOneRing(Lattice *grid, const std::vector<int>
             c->coord(TARGET_POS) += (R * c->coord(REF_POS) + t) / double(c->nbQuads());
         }
     }
+    grid->setArapDirty();
 }
 
 /**

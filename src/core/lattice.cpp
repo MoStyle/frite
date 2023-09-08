@@ -573,6 +573,40 @@ std::vector<Point::VectorType> Lattice::pinsDisplacementVectors() const {
     return pinsPositions;
 }
 
+Point::Affine Lattice::quadRefTransformation(int quadKey) {
+    if (!contains(quadKey)) {
+        qWarning() << "quadRefTransformation: lattice does not contains quadKey " << quadKey;
+        return Point::Affine::Identity();
+    }
+    int x, y;
+    keyToCoord(quadKey, x, y);
+    QuadPtr quad = m_hashTable.value(quadKey);
+    Point::VectorType positions[4] = {Point::VectorType(x, y), Point::VectorType(x + 1, y), Point::VectorType(x + 1, y + 1), Point::VectorType(x, y + 1)};
+    Point::VectorType originalPosMean = Point::VectorType::Zero();
+    Point::VectorType refPosMean = Point::VectorType::Zero();
+    for (int i = 0; i < NUM_CORNERS; ++i) {
+        originalPosMean += m_cellSize * positions[i] + Point::VectorType(m_oGrid.x(), m_oGrid.y());
+        refPosMean += quad->corners[i]->coord(REF_POS);
+    }
+    originalPosMean /= (double)NUM_CORNERS;
+    refPosMean /= (double)NUM_CORNERS;
+
+    Matrix2d PiPi, QiPi;
+    PiPi.setZero();
+    QiPi.setZero();
+    for (int i = 0; i < NUM_CORNERS; ++i) {
+        Point::VectorType pi = (m_cellSize * positions[i] + Point::VectorType(m_oGrid.x(), m_oGrid.y())) - originalPosMean;
+        Point::VectorType qi = quad->corners[i]->coord(REF_POS) - refPosMean;
+        Matrix2d pipi = pi * pi.transpose();
+        Matrix2d qipi = qi * pi.transpose();
+        PiPi += pipi;
+        QiPi += qipi;
+    }
+    Matrix2d A = QiPi * PiPi.inverse();
+    Point::VectorType t = refPosMean - A * originalPosMean;
+    return Point::Affine(Point::Translation(t) * Point::Rotation(A));
+}
+
 void Lattice::resetDeformation() {
     for (int i = 0; i < m_corners.size(); ++i) {
         m_corners[i]->coord(INTERP_POS) = m_corners[i]->coord(REF_POS);
@@ -1081,6 +1115,8 @@ void Lattice::restoreKeysRetrocomp(Group *group, Editor *editor) {
             }
         }
     };
+
+    qDebug() << "restoreKeysRetrocomp";
 
     m_oGrid = Eigen::Vector2i(editor->tabletCanvas()->canvasRect().x(), editor->tabletCanvas()->canvasRect().y());
     m_nbCols = std::ceil((float)editor->tabletCanvas()->canvasRect().width() / m_cellSize);

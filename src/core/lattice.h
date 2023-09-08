@@ -52,6 +52,7 @@ class Lattice {
     void setKeyframe(VectorKeyFrame *keyframe) { m_keyframe = keyframe; }
     int getMaxCornerKey() { return m_maxCornerKey; }
     void setMaxCornerKey(int k) { m_maxCornerKey = k; }
+    int maxQuadKey() { return m_nbCols * m_nbRows - 1; };
 
     // Flags
     inline bool isArapPrecomputeDirty() const { return m_precomputeDirty; }
@@ -119,6 +120,7 @@ class Lattice {
     Point::VectorType centerOfGravity(PosTypeIndex type = TARGET_POS);
     Point::VectorType motionEnergy2D() const { return m_tgtCM - m_refCM; };
     Point::VectorType motionEnergy2D(double t) const { return (m_tgtCM * t + m_refCM * (1.0 - t)) - m_refCM; };
+    Point::Affine quadRefTransformation(int quadKey);
     void resetDeformation();
     bool areQuadsConnected(int quadKeyA, int quadKeyB);
     bool isSingleConnectedComponent() const { return m_singleConnectedComponent; }

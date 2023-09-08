@@ -3859,7 +3859,7 @@
     <filename name="Options->Backgrounds->Directory" value=""/>
     <bool name="Options->Backgrounds->Keyframe" value="1"/>
     <bool name="Options->Backgrounds->Show" value="1"/>
-    <bool name="Options->Drawing->Draw GL" value="0"/>
+    <bool name="Options->Drawing->Draw GL" value="1"/>
     <bool name="Options->Drawing->Draw points" value="0"/>
     <bool name="Options->Drawing->Draw tess" value="0"/>
     <bool name="Options->Drawing->Hide main group" value="0"/>
