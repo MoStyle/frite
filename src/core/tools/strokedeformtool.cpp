@@ -1,16 +1,10 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "strokedeformtool.h"
 #include "group.h"
 #include "editor.h"
 #include "layermanager.h"
 #include "playbackmanager.h"
 #include "registrationmanager.h"
-#include "canvasscenemanager.h"
+
 #include "viewmanager.h"
 #include "tabletcanvas.h"
 #include "dialsandknobs.h"
@@ -39,10 +33,6 @@ Tool::ToolType StrokeDeformTool::toolType() const {
     return Tool::StrokeDeform;
 }
 
-QGraphicsItem *StrokeDeformTool::graphicsItem() {
-    return nullptr;
-}
-
 QCursor StrokeDeformTool::makeCursor(float scaling) const {
     int size = k_penSize * scaling;
     size /= 1.5f;
@@ -68,10 +58,6 @@ void StrokeDeformTool::toggled(bool on) {
         if (group != nullptr) {
             group->setShowGrid(on);
         }
-    }
-    if (!keyframe->selection().selectionEmpty()) {
-        m_editor->scene()->selectedGroupChanged(on ? QHash<int, Group *>() : keyframe->selection().selectedPostGroups());
-        m_editor->tabletCanvas()->updateCurrentFrame();
     }
 }
 
@@ -109,7 +95,7 @@ void StrokeDeformTool::released(const EventInfo& info) {
         m_editor->registration()->registration(group, TARGET_POS, TARGET_POS, false);
         m_editor->registration()->clearRegistrationTarget();
     }
-    info.key->resetTrajectories();
+    info.key->resetTrajectories(true);
     info.key->makeInbetweensDirty();
     m_currentStroke.reset<Stroke>(nullptr);
     m_pressed = false;
@@ -123,9 +109,9 @@ void StrokeDeformTool::wheel(const WheelEventInfo& info) {
 
 }
 
-void StrokeDeformTool::draw(QPainter &painter, VectorKeyFrame *key) {
+void StrokeDeformTool::drawUI(QPainter &painter, VectorKeyFrame *key) {
     for (Group *group : key->selection().selectedPostGroups()) {
-        float alphaLinear = m_editor->alpha(m_editor->playback()->currentFrame());
+        qreal alphaLinear = m_editor->currentAlpha();
 
         if (group->lattice()->isArapPrecomputeDirty()) {
             group->lattice()->precompute();
@@ -135,7 +121,7 @@ void StrokeDeformTool::draw(QPainter &painter, VectorKeyFrame *key) {
             float spacing = group->spacingAlpha(1.0);
             int stride = key->parentLayer()->stride(key->parentLayer()->getVectorKeyFramePosition(key));
             if (group->lattice()->currentPrecomputedTime() != spacing || group->lattice()->isArapInterpDirty()) 
-                group->lattice()->interpolateARAP(1.0, 1.0, key->rigidTransform(1.0));
+                group->lattice()->interpolateARAP(1.0, 1.0, group->globalRigidTransform(1.0));
             m_editor->updateInbetweens(key, stride, stride);
             group->drawGrid(painter, 0, TARGET_POS);
         }

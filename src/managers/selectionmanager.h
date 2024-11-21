@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef __SELECTIONMANAGER_H__
 #define __SELECTIONMANAGER_H__
 
@@ -28,8 +22,8 @@ public:
     void setSelectionMode(SelectionMode mode) { m_selectionMode = mode; } 
 
     // Select groups from a point or a shape selection
-    void selectGroups(VectorKeyFrame *key, float alpha, unsigned int groupType, const QPolygonF &bounds, bool useFilter, std::vector<int> &selectedGroups) const;
-    int selectGroups(VectorKeyFrame *key, float alpha, unsigned int groupType, const QPointF &pickPos, bool useFilter) const;
+    void selectGroups(VectorKeyFrame *key, qreal alpha, unsigned int inbetween, unsigned int groupType, const QPolygonF &bounds, bool useFilter, std::vector<int> &selectedGroups) const;
+    int selectGroups(VectorKeyFrame *key, qreal alpha, unsigned int inbetween, unsigned int groupType, const QPointF &pickPos, bool useFilter) const;
 
     // Modify the group filter
     void addToGroupFilter(int groupID) { m_groupFilter.push_back(groupID); }
@@ -50,13 +44,16 @@ public:
 
     // Select strokes from a predicate function
     void selectStrokes(VectorKeyFrame *keyframe, std::function<bool(const StrokePtr &stroke)> predicate, std::vector<int> &strokesIdx);
-    void selectStrokes(VectorKeyFrame *keyframe, std::function<bool(const StrokePtr &stroke)> predicate, StrokeIntervals &selection);
+    void selectStrokes(VectorKeyFrame *keyframe, unsigned int inbetween, std::function<bool(const StrokePtr &stroke)> predicate, StrokeIntervals &selection);
+    void selectStrokes(VectorKeyFrame *keyframe, unsigned int inbetween, std::function<bool(const StrokePtr &stroke)> predicate, std::vector<int> &strokesIdx);
 
     // Select trajectory constraint
     int selectTrajectoryConstraint(VectorKeyFrame *keyframe, const QPointF &pickPos, bool useFilter);
     void selectTrajectoryConstraint(VectorKeyFrame *keyframe, const QPolygonF &bounds, bool useFilter);
 
 private:
+    
+
     SelectionMode m_selectionMode;      // !unused
     SelectionShape m_selectionShape;    // !unused
     SelectionFilter m_selectionFilter;  // !unused

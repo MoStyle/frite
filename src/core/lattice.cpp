@@ -1,10 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "lattice.h"
 #include "stroke.h"
 #include "arap.h"
@@ -13,7 +6,9 @@
 #include "dialsandknobs.h"
 #include "trajectory.h"
 #include "tabletcanvas.h"
-#include "cubic.h"
+#include "bezier2D.h"
+#include "qteigen.h"
+#include "mask.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -26,6 +21,13 @@
 typedef Eigen::Triplet<double> TripletD;
 
 static dkBool k_useGlobalRigidTransform("Options->Drawing->Use global transform for groups", true);
+static dkBool k_drawDebugLattice("Debug->Draw lattice debug", false);
+
+struct LatticeVtx {
+    GLfloat x;
+    GLfloat y;
+    GLubyte flags;
+};
 
 Lattice::Lattice(VectorKeyFrame *keyframe)
     : m_keyframe(keyframe),
@@ -33,14 +35,24 @@ Lattice::Lattice(VectorKeyFrame *keyframe)
       m_nbRows(0),
       m_cellSize(0),
       m_oGrid(Eigen::Vector2i::Zero()),
+      m_toRestPos(Point::Affine::Identity()),
+      m_scaling(Point::Affine::Identity()),
       m_precomputeDirty(true),
       m_arapDirty(true),
       m_backwardUVDirty(true),
       m_singleConnectedComponent(false),
+      m_retrocomp(false),
       m_currentPrecomputedTime(-1.0f),
       m_maxCornerKey(0),
       m_rot(0.0),
-      m_scale(1.0) {}
+      m_scale(1.0),
+      m_vbo(QOpenGLBuffer::VertexBuffer), 
+      m_ebo(QOpenGLBuffer::IndexBuffer), 
+      m_bufferCreated(false), 
+      m_bufferDestroyed(false), 
+      m_bufferDirty(true) {
+
+      }
 
 Lattice::Lattice(const Lattice &other)
     : m_keyframe(other.m_keyframe),
@@ -48,23 +60,76 @@ Lattice::Lattice(const Lattice &other)
       m_nbRows(other.m_nbRows),
       m_cellSize(other.m_cellSize),
       m_oGrid(other.m_oGrid),
+      m_toRestPos(other.m_toRestPos),
+      m_scaling(other.m_scaling),
       m_precomputeDirty(true),
       m_arapDirty(true),
       m_backwardUVDirty(true),
+      m_retrocomp(false),
       m_currentPrecomputedTime(-1.0),
       m_maxCornerKey(0),
       m_rot(0.0),
-      m_scale(1.0) {
+      m_scale(1.0), 
+      m_vbo(QOpenGLBuffer::VertexBuffer), 
+      m_ebo(QOpenGLBuffer::IndexBuffer), 
+      m_bufferCreated(false), 
+      m_bufferDestroyed(false), 
+      m_bufferDirty(true) {
     // create quads and copy corners
     bool isNewQuad = false;
     int x, y;
-    for (auto it = other.m_hashTable.constBegin(); it != other.m_hashTable.constEnd(); ++it) {
+    for (auto it = other.m_quads.constBegin(); it != other.m_quads.constEnd(); ++it) {
         keyToCoord(it.key(), x, y);
         QuadPtr quad = addQuad(it.key(), x, y, isNewQuad);
+        quad->setFlags(it.value()->flags());
         for (int i = 0; i < 4; ++i) {
+            quad->corners[i]->coord(REF_POS) = it.value()->corners[i]->coord(REF_POS);
             quad->corners[i]->coord(TARGET_POS) = it.value()->corners[i]->coord(TARGET_POS);
             quad->corners[i]->coord(INTERP_POS) = it.value()->corners[i]->coord(INTERP_POS);
             quad->corners[i]->coord(DEFORM_POS) = it.value()->corners[i]->coord(DEFORM_POS);
+            quad->corners[i]->setFlags(it.value()->corners[i]->flags());
+            quad->corners[i]->setDeformable(true);
+        }
+    }
+    // Copy quads stroke interval?
+    isConnected();
+}
+
+Lattice::Lattice(const Lattice &other, const std::vector<int> &quads)
+    : m_keyframe(other.m_keyframe),
+      m_nbCols(other.m_nbCols),
+      m_nbRows(other.m_nbRows),
+      m_cellSize(other.m_cellSize),
+      m_oGrid(other.m_oGrid),
+      m_scaling(Point::Affine::Identity()),
+      m_precomputeDirty(true),
+      m_arapDirty(true),
+      m_backwardUVDirty(true),
+      m_retrocomp(false),
+      m_currentPrecomputedTime(-1.0),
+      m_maxCornerKey(0),
+      m_rot(0.0),
+      m_scale(1.0), 
+      m_vbo(QOpenGLBuffer::VertexBuffer), 
+      m_ebo(QOpenGLBuffer::IndexBuffer), 
+      m_bufferCreated(false), 
+      m_bufferDestroyed(false), 
+      m_bufferDirty(true) {
+    bool isNewQuad = false;
+    int x, y;
+    for (int quadKey : quads) {
+        keyToCoord(quadKey, x, y);
+        if (!other.contains(quadKey)) qCritical() << "Error in Lattice constructor: quad key " << quadKey << " does not exist in the other lattice.";
+        QuadPtr otherQuad = other.quad(quadKey);
+        QuadPtr newQuad = addQuad(quadKey, x, y, isNewQuad);
+        newQuad->setFlags(otherQuad->flags());
+        for (int i = 0; i < 4; ++i) {
+            newQuad->corners[i]->coord(REF_POS) = otherQuad->corners[i]->coord(REF_POS);
+            newQuad->corners[i]->coord(TARGET_POS) = otherQuad->corners[i]->coord(TARGET_POS);
+            newQuad->corners[i]->coord(INTERP_POS) = otherQuad->corners[i]->coord(INTERP_POS);
+            newQuad->corners[i]->coord(DEFORM_POS) = otherQuad->corners[i]->coord(DEFORM_POS);
+            newQuad->corners[i]->setFlags(otherQuad->corners[i]->flags());
+            newQuad->corners[i]->setDeformable(true);
         }
     }
     isConnected();
@@ -79,7 +144,7 @@ void Lattice::init(int cellsize, int nbCols, int nbRows, Eigen::Vector2i origin)
 }
 
 void Lattice::save(QDomDocument &doc, QDomElement &latticeElt) const {
-    // save attributes
+    // Save grid attributes
     // latticeElt.setAttribute("nbInterStrokes", uint(nbInterStrokes()));
     latticeElt.setAttribute("cellSize", int(cellSize()));
     latticeElt.setAttribute("nbCols", nbCols());
@@ -87,29 +152,27 @@ void Lattice::save(QDomDocument &doc, QDomElement &latticeElt) const {
     latticeElt.setAttribute("origin_x", origin().x());
     latticeElt.setAttribute("origin_y", origin().y());
 
-    // save quads
+    // Save quads
     int count = 0;
-    for (auto it = m_hashTable.begin(); it != m_hashTable.end(); ++it) {
+    for (auto it = m_quads.begin(); it != m_quads.end(); ++it) {
         QDomElement quadElt = doc.createElement("quad");
         quadElt.setAttribute("key", int(it.key()));
+        quadElt.setAttribute("flags", QString::fromUtf8(it.value()->flags().to_string().data(), it.value()->flags().size()));
+
         // TODO: save strokerangehash m_elements (or recompute them)
         latticeElt.appendChild(quadElt);
         count++;
     }
 
-    // save corners
+    // Save corners
     for (Corner *c : m_corners) {
         QDomElement cornerElt = doc.createElement("corner");
         cornerElt.setAttribute("key", int(c->getKey()));
-        cornerElt.setAttribute("deformable", bool(c->isDeformable()));
+        cornerElt.setAttribute("flags", QString::fromUtf8(c->flags().to_string().data(), c->flags().size()));
         cornerElt.setAttribute("coord_TARGET_POS_x", c->coord(TARGET_POS).x());
         cornerElt.setAttribute("coord_TARGET_POS_y", c->coord(TARGET_POS).y());
         cornerElt.setAttribute("coord_REF_POS_x", c->coord(REF_POS).x());
         cornerElt.setAttribute("coord_REF_POS_y", c->coord(REF_POS).y());
-        cornerElt.setAttribute("coord_INTERP_POS_x", c->coord(INTERP_POS).x());
-        cornerElt.setAttribute("coord_INTERP_POS_y", c->coord(INTERP_POS).y());
-        cornerElt.setAttribute("coord_DEFORM_POS_x", c->coord(DEFORM_POS).x());
-        cornerElt.setAttribute("coord_DEFORM_POS_y", c->coord(DEFORM_POS).y());
         cornerElt.setAttribute("quadNum", c->nbQuads());
         cornerElt.setAttribute("quadKey_0", c->quads(TOP_LEFT) == nullptr ? INT_MAX : c->quads(TOP_LEFT)->key());
         cornerElt.setAttribute("quadKey_1", c->quads(TOP_RIGHT) == nullptr ? INT_MAX : c->quads(TOP_RIGHT)->key());
@@ -117,6 +180,18 @@ void Lattice::save(QDomDocument &doc, QDomElement &latticeElt) const {
         cornerElt.setAttribute("quadKey_3", c->quads(BOTTOM_LEFT) == nullptr ? INT_MAX : c->quads(BOTTOM_LEFT)->key());
         latticeElt.appendChild(cornerElt);
     }
+
+    // Save toRestTransform
+    QDomElement transformElt = doc.createElement("transform");
+    QString string;
+    QTextStream stream(&string);
+    auto matrix = m_toRestPos.matrix();
+    stream << matrix(0, 0) << " " << matrix(0, 1) << " " << matrix(0, 2) << " ";
+    stream << matrix(1, 0) << " " << matrix(1, 1) << " " << matrix(1, 2) << " ";
+    stream << matrix(2, 0) << " " << matrix(2, 1) << " " << matrix(2, 2) << " ";
+    QDomText txt = doc.createTextNode(string);
+    transformElt.appendChild(txt);
+    latticeElt.appendChild(transformElt);    
 }
 
 void Lattice::load(QDomElement &latticeElt) {
@@ -125,12 +200,19 @@ void Lattice::load(QDomElement &latticeElt) {
 
     // Load quads
     QDomElement quadElt = latticeElt.firstChildElement("quad");
+    bool retrocomp = true;
     while (!quadElt.isNull()) {
         int key = quadElt.attribute("key").toInt();
         bool isNewQuad = false;
-        addEmptyQuad(key);
+        QuadPtr quad = addEmptyQuad(key);
+        if (quadElt.hasAttribute("antialias")) retrocomp = false;
+        quad->setFlags((std::bitset<8>(quadElt.attribute("flags", "00000000").toStdString())));
+        if (quadElt.hasAttribute("antialias")) {
+            quad->setPivot((bool)quadElt.attribute("antialias").toInt()); // retrocomp
+        }
         quadElt = quadElt.nextSiblingElement("quad");
     }
+    m_retrocomp = retrocomp;
 
     // Load corners
     QDomElement cornerElt = latticeElt.firstChildElement("corner");
@@ -138,23 +220,33 @@ void Lattice::load(QDomElement &latticeElt) {
         int key = cornerElt.attribute("key").toInt();
         Corner *c = new Corner();
         c->setKey(key);
-        c->setDeformable(cornerElt.attribute("deformable").toInt());
+        c->setFlags(std::bitset<8>(cornerElt.attribute("flags", "00000000").toStdString()));
         c->setNbQuads(cornerElt.attribute("quadNum").toInt());
         c->coord(TARGET_POS) = Point::VectorType(cornerElt.attribute("coord_TARGET_POS_x").toDouble(), cornerElt.attribute("coord_TARGET_POS_y").toDouble());
         c->coord(REF_POS) = Point::VectorType(cornerElt.attribute("coord_REF_POS_x").toDouble(), cornerElt.attribute("coord_REF_POS_y").toDouble());
-        c->coord(INTERP_POS) = Point::VectorType(cornerElt.attribute("coord_INTERP_POS_x").toDouble(), cornerElt.attribute("coord_INTERP_POS_y").toDouble());
-        c->coord(DEFORM_POS) = Point::VectorType(cornerElt.attribute("coord_DEFORM_POS_x").toDouble(), cornerElt.attribute("coord_DEFORM_POS_y").toDouble());
-        // set quad/corner correspondences
+        c->coord(DEFORM_POS) = c->coord(REF_POS);
+        c->coord(INTERP_POS) = c->coord(REF_POS);
+        // Set quad/corner correspondences
         for (int i = 0; i < 4; ++i) {
             int quadKey = cornerElt.attribute("quadKey_" + QString::number(i)).toInt();
             if (contains(quadKey)) {
-                c->quads(CornerIndex(i)) = m_hashTable[quadKey];
+                c->quads(CornerIndex(i)) = m_quads[quadKey];
                 c->quads(CornerIndex(i))->corners[(i + 2) % 4] = c;
             }
         }
         m_corners.push_back(c);
         cornerElt = cornerElt.nextSiblingElement("corner");
     }
+
+    // Load transform
+    QDomElement transformElt = latticeElt.firstChildElement("transform");
+    QString string = transformElt.text();
+    QTextStream stream(&string);
+    auto matrix = m_toRestPos.matrix();
+    stream >> matrix(0, 0) >> matrix(0, 1) >> matrix(0, 2);
+    stream >> matrix(1, 0) >> matrix(1, 1) >> matrix(1, 2);
+    stream >> matrix(2, 0) >> matrix(2, 1) >> matrix(2, 2);
+    m_toRestPos.matrix() = matrix;
 
     m_maxCornerKey = m_corners.size();
     m_arapDirty = true;
@@ -168,7 +260,7 @@ void Lattice::clear() {
         quad.reset();
     }
     qDeleteAll(m_corners);
-    m_hashTable.clear();
+    m_quads.clear();
     m_corners.clear();
     m_maxCornerKey = 0;
     m_arapDirty = true;
@@ -183,11 +275,11 @@ void Lattice::clear() {
  * Remove the reference to a stroke. The stroke itself is not removed, just its embedding in the lattice. 
  */
 void Lattice::removeStroke(int strokeId, bool breakdown) {
-    QMutableHashIterator<int, QuadPtr> it(m_hashTable);
+    QMutableHashIterator<int, QuadPtr> it(m_quads);
     while (it.hasNext()) {
         it.next();
         it.value()->removeStroke(strokeId);
-        if (it.value()->nbElements() == 0 && !breakdown) {
+        if (it.value()->nbForwardStrokes() == 0 && it.value()->nbBackwardStrokes() == 0 && !breakdown) {
             it.value()->corners[TOP_LEFT]->quads(BOTTOM_RIGHT) = nullptr;
             it.value()->corners[TOP_RIGHT]->quads(BOTTOM_LEFT) = nullptr;
             it.value()->corners[BOTTOM_LEFT]->quads(TOP_RIGHT) = nullptr;
@@ -213,14 +305,29 @@ QuadPtr Lattice::addQuad(const Point::VectorType &point, bool &isNewQuad) {
 
     if (contains(point, REF_POS, q, key)) {
         isNewQuad = false;
+        // qDebug() << "already contained!";
+        // for (int i = 0; i < 4; ++i) {
+        //     std::cout << q->corners[i]->coord(REF_POS).transpose() << std::endl;
+        // }
         return q;
     }
 
     int r, c;
-    posToCoord(point, r, c);
+    Point::VectorType pointRest = m_toRestPos * point;
+    posToCoord(pointRest, r, c);    
     key = coordToKey(r, c);
 
-    return addQuad(key, r, c, isNewQuad);
+    QuadPtr quad = addQuad(key, r, c, isNewQuad);
+    if (isNewQuad){
+        for (Corner * corner : quad->corners){
+            if (corner->nbQuads() < 2){
+                corner->coord(REF_POS) = m_toRestPos.inverse() * corner->coord(REF_POS);
+                corner->coord(TARGET_POS) = m_toRestPos.inverse() * corner->coord(TARGET_POS);
+            }
+        }
+    }
+
+    return quad;
 }
 
 /**
@@ -235,7 +342,7 @@ QuadPtr Lattice::addQuad(int key, int x, int y, bool &isNewQuad) {
 
     if (contains(key)) {
         isNewQuad = false;
-        return m_hashTable[key];
+        return m_quads[key];
     }
 
     // Create new cell
@@ -246,7 +353,7 @@ QuadPtr Lattice::addQuad(int key, int x, int y, bool &isNewQuad) {
         if (x < 0 || y < 0 || x >= nbCols() || y >= nbRows()) return;
         int nKey = coordToKey(x, y);
         if (contains(nKey)) {
-            QuadPtr quad = m_hashTable[nKey];
+            QuadPtr quad = m_quads[nKey];
             Corner *corner = quad->corners[cornerIdx];
             if (corner->quads(quadIdx) == nullptr) {
                 corner->quads(quadIdx) = cell;
@@ -297,7 +404,7 @@ QuadPtr Lattice::addQuad(int key, int x, int y, bool &isNewQuad) {
 
 // Add an empty quad object (no corners, no elements)
 QuadPtr Lattice::addEmptyQuad(int key) {
-    if (contains(key)) return m_hashTable[key];
+    if (contains(key)) return m_quads[key];
     QuadPtr cell = std::shared_ptr<Quad>(new Quad(key));
     insert(key, cell);
     return cell;
@@ -321,43 +428,28 @@ QuadPtr Lattice::addQuad(QuadPtr &quad) {
         newQuad->corners[i]->coord(INTERP_POS) = quad->corners[i]->coord(INTERP_POS);
         newQuad->corners[i]->coord(DEFORM_POS) = quad->corners[i]->coord(DEFORM_POS);
     }
-    newQuad->setElements(quad->elements());
+    newQuad->setForwardStrokes(quad->forwardStrokes());
+    newQuad->setBackwardStrokes(quad->backwardStrokes());
 
     return newQuad;
 }
 
 void Lattice::deleteQuad(int key) {
     // update adjacent corners
-    if (m_hashTable.contains(key)) {
-        m_hashTable.value(key)->corners[TOP_LEFT]->quads(BOTTOM_RIGHT) = nullptr;
-        m_hashTable.value(key)->corners[TOP_RIGHT]->quads(BOTTOM_LEFT) = nullptr;
-        m_hashTable.value(key)->corners[BOTTOM_LEFT]->quads(TOP_RIGHT) = nullptr;
-        m_hashTable.value(key)->corners[BOTTOM_RIGHT]->quads(TOP_LEFT) = nullptr;
+    if (m_quads.contains(key)) {
+        m_quads.value(key)->corners[TOP_LEFT]->quads(BOTTOM_RIGHT) = nullptr;
+        m_quads.value(key)->corners[TOP_RIGHT]->quads(BOTTOM_LEFT) = nullptr;
+        m_quads.value(key)->corners[BOTTOM_LEFT]->quads(TOP_RIGHT) = nullptr;
+        m_quads.value(key)->corners[BOTTOM_RIGHT]->quads(TOP_LEFT) = nullptr;
     }
-    m_hashTable.remove(key);
+    m_quads.remove(key);
     deleteUnusedCorners();
 }
-
-void Lattice::deleteVolatileQuads() {
-    QMutableHashIterator<int, QuadPtr> it(m_hashTable);
+void Lattice::deleteQuadsPredicate(std::function<bool(QuadPtr)> predicate) {
+    QMutableHashIterator<int, QuadPtr> it(m_quads);
     while (it.hasNext()) {
         it.next();
-        if (it.value()->isVolatile()) {
-            it.value()->corners[TOP_LEFT]->quads(BOTTOM_RIGHT) = nullptr;
-            it.value()->corners[TOP_RIGHT]->quads(BOTTOM_LEFT) = nullptr;
-            it.value()->corners[BOTTOM_LEFT]->quads(TOP_RIGHT) = nullptr;
-            it.value()->corners[BOTTOM_RIGHT]->quads(TOP_LEFT) = nullptr;
-            it.remove();
-        }
-    }
-    deleteUnusedCorners();
-}
-
-void Lattice::deleteEmptyVolatileQuads() {
-    QMutableHashIterator<int, QuadPtr> it(m_hashTable);
-    while (it.hasNext()) {
-        it.next();
-        if (it.value()->isVolatile() && it.value()->isEmpty()) {
+        if (predicate(it.value())) {
             it.value()->corners[TOP_LEFT]->quads(BOTTOM_RIGHT) = nullptr;
             it.value()->corners[TOP_RIGHT]->quads(BOTTOM_LEFT) = nullptr;
             it.value()->corners[BOTTOM_LEFT]->quads(TOP_RIGHT) = nullptr;
@@ -404,30 +496,53 @@ void Lattice::deleteUnusedCorners() {
     m_maxCornerKey = m_corners.size();
 }
 
-/**
- * Works for any simple convex or concave quads
- * If we can guarantee that all quads are convex at all time then we might optimize this function
- */
-bool Lattice::quadContainsPoint(QuadPtr quad, const Point::VectorType &p, PosTypeIndex cornerType) {
-    if (quad == nullptr) return false;
-    Point::VectorType q(-1e7, -1e7);
+// Works for any quad (concave or convex)
+// If we can guarantee that all quads are convex at all time then we might optimize this function
+bool Lattice::quadContainsPoint(QuadPtr quad, const Point::VectorType &p, PosTypeIndex cornerType) const {
+    // if (quad == nullptr) return false;
+    // Point::VectorType q(-1e7, -1e7);
+    // Point::VectorType c[4];
+    // c[0] = quad->corners[TOP_RIGHT]->coord(cornerType);
+    // c[1] = quad->corners[BOTTOM_RIGHT]->coord(cornerType);
+    // c[2] = quad->corners[BOTTOM_LEFT]->coord(cornerType);
+    // c[3] = quad->corners[TOP_LEFT]->coord(cornerType);
+    // int num = 0;
+    // for (int i = 0; i < 4; i++) {
+    //     if (Geom::checkSegmentsIntersection(p, q, c[i], c[(i + 1) % 4])) {
+    //         if (Geom::wedge((c[i] - p), (q - p)) != 0) num++;
+    //     }
+    // }
+    // return num % 2 == 1;
+
+
+    if (quad == nullptr) {
+        return false;
+    }
+
+    Point::VectorType q;
     Point::VectorType c[4];
     c[0] = quad->corners[TOP_RIGHT]->coord(cornerType);
     c[1] = quad->corners[BOTTOM_RIGHT]->coord(cornerType);
     c[2] = quad->corners[BOTTOM_LEFT]->coord(cornerType);
     c[3] = quad->corners[TOP_LEFT]->coord(cornerType);
-    int num = 0;
+
+    // Edges are considered inside
+    Point::Scalar prevWedge = 0.0, curWedge;
     for (int i = 0; i < 4; i++) {
-        if (Geom::checkSegmentsIntersection(p, q, c[i], c[(i + 1) % 4])) {
-            if (Geom::wedge((c[i] - p), (q - p)) != 0) num++;
+        q = (p - c[i]);
+        curWedge = Geom::wedge(q, (c[(i + 1) % 4] - c[i]));
+        if (prevWedge != 0.0 && curWedge != 0.0 && Utils::sgn(prevWedge) != Utils::sgn(curWedge)) {
+            return false;
         }
+        prevWedge = curWedge;
     }
-    return num % 2 == 1;
+
+    return true;
 }
 
-bool Lattice::contains(const Point::VectorType &p, PosTypeIndex cornerType, QuadPtr &quad, int &key) {
+bool Lattice::contains(const Point::VectorType &p, PosTypeIndex cornerType, QuadPtr &quad, int &key) const {
     // TODO bounding box test before
-    for (auto it = m_hashTable.cbegin(); it != m_hashTable.cend(); ++it) {
+    for (auto it = m_quads.cbegin(); it != m_quads.cend(); ++it) {
         if (quadContainsPoint(it.value(), p, cornerType)) {
             quad = it.value();
             key = it.key();
@@ -437,6 +552,168 @@ bool Lattice::contains(const Point::VectorType &p, PosTypeIndex cornerType, Quad
     return false;
 }
 
+/**
+ * Returns true if all points of the stroke are inside the grid at the given position
+ * If checkConnectivity is true, checks that adjacent points in the stroke are inside the same quad or adjacent quads in the grid.
+ */
+bool Lattice::contains(Stroke *stroke, int from, int to, PosTypeIndex pos, bool checkConnectivity) const {
+    QuadPtr q; int k;
+    int lastQuadKey = INT_MAX;
+
+    if (checkConnectivity) {
+        for (int i = from; i <= to; ++i) {
+            std::set<int> quads;
+            for (QuadPtr q : m_quads) {
+                if (quadContainsPoint(q, stroke->points()[i]->pos(), pos)) {
+                    quads.insert(q->key());
+                }
+            }
+
+            if (quads.size() > 1) return false; // TODO if we keep this we can remove the rest
+
+            // first point
+            if (lastQuadKey == INT_MAX) { 
+                lastQuadKey = *quads.begin(); // TODO: reset to this point when a branch fails?
+                continue; 
+            }
+
+            // still in the same quad
+            if (quads.find(lastQuadKey) != quads.end()) {
+                continue;
+            }
+
+            // current quad changed, check adjacency, choose first
+            bool foundQk = false;
+            for (int qk : quads) {
+                if (areQuadsConnected(qk, lastQuadKey)) {
+                    lastQuadKey = qk;
+                    foundQk = true;
+                    break;
+                }
+            }
+
+            if (!foundQk) {
+                qWarning() << "Error: failed connectivity check in Lattice::contains";
+                return false;
+            }
+        }
+    } else {
+        for (int i = from; i <= to; ++i) {
+            if (!contains(stroke->points()[i]->pos(), pos, q, k)) {
+                return false;
+            }
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * Returns true if all points of the stroke are inside the grid at the given position
+ * If checkConnectivity is true, checks that adjacent points in the stroke are inside the same quad or adjacent quads in the grid.
+ */
+bool Lattice::contains(VectorKeyFrame *key, const StrokeIntervals &intervals, PosTypeIndex pos, bool checkConnectivity) const {
+    for (auto it = intervals.constBegin(); it != intervals.constEnd(); ++it) {
+        for (const Interval &interval : it.value()) {
+            if (contains(key->stroke(it.key()), interval.from(), interval.to(), pos, checkConnectivity)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/**
+ * Returns true if there is at least a point of the stroke inside the grid at the given position 
+ */
+bool Lattice::intersects(Stroke *stroke, int from, int to, PosTypeIndex pos) const {
+    QuadPtr q; int k;
+    for (int i = from; i <= to; ++i) {
+        if (contains(stroke->points()[i]->pos(), pos, q, k)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Returns true if there is at least a point of the stroke inside the grid at the given position 
+ */
+bool Lattice::intersects(VectorKeyFrame *key, const StrokeIntervals &intervals, PosTypeIndex pos) const {
+    for (auto it = intervals.constBegin(); it != intervals.constEnd(); ++it) {
+        for (const Interval &interval : it.value()) {
+            if (intersects(key->stroke(it.key()), interval.from(), interval.to(), pos)) {
+                return true;
+            }
+        }
+    }
+    return false; 
+}
+
+/**
+ * Returns true if the stroke interval intersects the grid.
+ * All intersected quads are passed in the quads parameter (even overlapping quads)
+ */
+bool Lattice::intersectedQuads(Stroke *stroke, int from, int to, PosTypeIndex pos, std::set<int> &quads) const {
+    quads.clear();
+    bool res = false;
+    for (int i = from; i <= to; ++i) {
+        for (auto it = m_quads.cbegin(); it != m_quads.cend(); ++it) {
+            if (quadContainsPoint(it.value(), stroke->points()[i]->pos(), pos)) {
+                res = true;
+                quads.insert(it.key());
+            }
+        }
+    }
+    return res;
+}
+
+/**
+ * Tag all quads embedding the given stroke. 
+ * Returns true if the stroke can be embedded in a set of adjacent quads.
+ * Quads are still tagged even if the function return false
+ */
+bool Lattice::tagValidPath(Stroke *stroke, int from, int to, PosTypeIndex pos, QuadFlags flag) const {
+    int lastQuadKey = INT_MAX;
+    for (int i = from; i <= to; ++i) {
+        std::set<int> quads;
+        for (QuadPtr q : m_quads) {
+            if (quadContainsPoint(q, stroke->points()[i]->pos(), pos)) {
+                quads.insert(q->key());
+            }
+        }
+
+        // first point
+        if (lastQuadKey == INT_MAX) { 
+            lastQuadKey = *quads.begin();
+            m_quads.value(lastQuadKey)->setFlag(flag, true);
+            continue; 
+        }
+
+        // still in the same quad
+        if (quads.find(lastQuadKey) != quads.end()) {
+            continue;
+        }
+
+        // current quad changed, check adjacency, choose first
+        bool foundQk = false;
+        for (int qk : quads) {
+            if (areQuadsConnected(qk, lastQuadKey)) {
+                m_quads.value(qk)->setFlag(flag, true);
+                lastQuadKey = qk;
+                foundQk = true;
+                break;
+            }
+        }
+
+        if (!foundQk) {
+            qWarning() << "Error: failed connectivity check in Lattice::tagValidPath";
+            return false;
+        }
+    }
+    return true;
+}
+
 Point::VectorType Lattice::getUV(const Point::VectorType &p, PosTypeIndex type, int &quadKey) {
     QuadPtr quad = nullptr;
 
@@ -444,12 +721,15 @@ Point::VectorType Lattice::getUV(const Point::VectorType &p, PosTypeIndex type, 
     if (!contains(p, type, quad, quadKey)) {
         int r, c;
         posToCoord(p, r, c);
-        qWarning() << "getUV: can't find point quad (" << p.x() << ", " << p.y() << ") cellSize=" << m_cellSize << ", nbRows=" << m_nbRows << ", nbCols=" << m_nbCols << ", r=" << r
-                   << ", c=" << c;
+        qWarning() << "getUV: can't find point quad (" << p.x() << ", " << p.y() << ") cellSize=" << m_cellSize << ", nbRows=" << m_nbRows << ", nbCols=" << m_nbCols << ", r=" << r << ", c=" << c;
         quadKey = INT_MAX;
         return Point::VectorType::Zero();
     }
 
+    return getUV(p, type, quad);
+}
+
+Point::VectorType Lattice::getUV(const Point::VectorType &p, PosTypeIndex type, QuadPtr quad) {
     Point::VectorType pos[4];
     for (int i = 0; i < 4; i++) pos[i] = quad->corners[i]->coord(type);
 
@@ -494,18 +774,105 @@ Point::VectorType Lattice::getUV(const Point::VectorType &p, PosTypeIndex type, 
  * p is the fallback position in case 'quadKey' is invalid
  */
 Point::VectorType Lattice::getWarpedPoint(const Point::VectorType &p, int quadKey, const Point::VectorType &uv, PosTypeIndex type) {
-    if (!m_hashTable.contains(quadKey)) {
+    if (!m_quads.contains(quadKey)) {
         qWarning() << "getWarpedPoint: can't find quad with key " << quadKey;
         return p;
     }
-    QuadPtr quad = m_hashTable.value(quadKey);
+    QuadPtr quad = m_quads.value(quadKey);
     return (quad->corners[TOP_LEFT]->coord(type) * (1.0 - uv.x()) + quad->corners[TOP_RIGHT]->coord(type) * uv.x()) * (1.0 - uv.y()) 
           + (quad->corners[BOTTOM_LEFT]->coord(type) * (1.0 - uv.x()) + quad->corners[BOTTOM_RIGHT]->coord(type) * uv.x()) * uv.y();
 }
 
-bool Lattice::bakeForwardUV(const Stroke *stroke, Interval &interval, UVHash &uvs) {
+bool Lattice::bakeForwardUV(const Stroke *stroke, Interval &interval, UVHash &uvs, PosTypeIndex type) {
     if (stroke == nullptr) {
-        qWarning() << "cannot compute UVs for this interval: invalid stroke: " << stroke;
+        qWarning() << "Cannot compute UVs for this interval: invalid stroke: " << stroke;
+        return false;
+    }
+
+    // Overshoot if possible
+    QuadPtr q;
+    int k, from = interval.from(), to = interval.to();
+    bool isNextPointInLattice = to < stroke->size() - 1 && contains(stroke->points()[interval.to() + 1]->pos(), type, q, k);
+    if (isNextPointInLattice) {
+        to += 1;
+    } else if (to < stroke->size() - 1) {
+        interval.setOvershoot(false);
+    }
+
+    int key;
+    for (size_t i = from; i <= to; ++i) {
+        const Point::VectorType &pos = stroke->points()[i]->pos();
+        stroke->points()[i]->initId(stroke->id(), i);
+        UVInfo uv;
+        if (uvs.has(stroke->id(), i)) uv = uvs.get(stroke->id(), i);
+        uv.uv = getUV(pos, type, key);
+        uv.quadKey = key;
+        uvs.add(stroke->id(), i, uv);
+    }
+
+    return true;
+}
+
+bool Lattice::bakeForwardUVConnectivityCheck(const Stroke *stroke, Interval &interval, UVHash &uvs, PosTypeIndex type) {
+    if (stroke == nullptr) {
+        qWarning() << "Cannot compute UVs for this interval: invalid stroke: " << stroke;
+        return false;
+    }
+
+    // Overshoot if possible
+    QuadPtr q;
+    int k, from = interval.from(), to = interval.to();
+    bool isNextPointInLattice = to < stroke->size() - 1 && contains(stroke->points()[interval.to() + 1]->pos(), type, q, k);
+    if (isNextPointInLattice) {
+        to += 1;
+    } else if (to < stroke->size() - 1) {
+        interval.setOvershoot(false);
+    }
+
+    int key, prevKey = INT_MAX;
+    for (size_t i = from; i <= to; ++i) {
+        std::set<int> quads;
+        for (QuadPtr q : m_quads) {
+            if (quadContainsPoint(q, stroke->points()[i]->pos(), type)) {
+                quads.insert(q->key());
+            }
+        }
+
+        Q_ASSERT_X(!quads.empty(), "bakeForwardUVConnectivityCheck", "cannot find an intersecting quad");
+
+        
+        if (prevKey == INT_MAX) {                           // First point
+            key = *quads.begin();
+        } else if (quads.find(prevKey) != quads.end()) {    // Same quad
+            key = prevKey;
+        } else {                                            // Find adjacent quad
+            bool foundQk = false;
+            for (int qk : quads) {
+                if (areQuadsConnected(qk, prevKey)) {
+                    foundQk = true;
+                    key = qk;
+                    break;
+                }
+            }
+            Q_ASSERT_X(foundQk, "bakeForwardUVConnectivityCheck", "cannot find an intersecting quad adjacent to the previous one");
+        }
+
+
+        stroke->points()[i]->initId(stroke->id(), i);
+        UVInfo uv;
+        if (uvs.has(stroke->id(), i)) uv = uvs.get(stroke->id(), i);
+        uv.uv = getUV(stroke->points()[i]->pos(), type, m_quads.value(key));
+        uv.quadKey = key;
+        uvs.add(stroke->id(), i, uv);
+        prevKey = key;
+    }
+
+    return true;
+}
+
+bool Lattice::bakeForwardUVPrecomputed(const Stroke *stroke, Interval &interval, UVHash &uvs) {
+    if (stroke == nullptr) {
+        qWarning() << "Cannot compute UVs for this interval: invalid stroke: " << stroke;
         return false;
     }
 
@@ -523,10 +890,16 @@ bool Lattice::bakeForwardUV(const Stroke *stroke, Interval &interval, UVHash &uv
     for (size_t i = from; i <= to; ++i) {
         const Point::VectorType &pos = stroke->points()[i]->pos();
         stroke->points()[i]->initId(stroke->id(), i);
+        if (!uvs.has(stroke->id(), i) || !quadContainsPoint(m_quads.value(uvs.get(stroke->id(), i).quadKey), pos, REF_POS)) {
+            qCritical() << "Error in bakeForwardUVPrecomputed: " << uvs.has(stroke->id(), i);
+            int qq; QuadPtr qkqk;
+            getUV(pos, REF_POS, qq);
+            std::vector<int> goodQuads;
+            for (QuadPtr q : m_quads) if (quadContainsPoint(q, pos, REF_POS)) goodQuads.push_back(q->key());
+        } 
         UVInfo uv;
-        if (uvs.has(stroke->id(), i)) uv = uvs.get(stroke->id(), i);
-        uv.uv = getUV(pos, REF_POS, key);
-        uv.quadKey = key;
+        uv = uvs.get(stroke->id(), i);
+        uv.uv = getUV(pos, REF_POS, m_quads.value(uv.quadKey));
         uvs.add(stroke->id(), i, uv);
     }
 
@@ -535,7 +908,7 @@ bool Lattice::bakeForwardUV(const Stroke *stroke, Interval &interval, UVHash &uv
 
 bool Lattice::bakeBackwardUV(const Stroke *stroke, Interval &interval, const Point::Affine &transform, UVHash &uvs) {
     if (stroke == nullptr) {
-        qWarning() << "cannot compute UVs for this interval: invalid stroke: " << stroke;
+        qWarning() << "Cannot compute UVs for this interval: invalid stroke: " << stroke;
         return false;
     }
 
@@ -565,7 +938,7 @@ bool Lattice::bakeBackwardUV(const Stroke *stroke, Interval &interval, const Poi
 
 std::vector<Point::VectorType> Lattice::pinsDisplacementVectors() const {
     std::vector<Point::VectorType> pinsPositions;
-    for (QuadPtr quad : m_hashTable) {
+    for (QuadPtr quad : m_quads) {
         if (quad->isPinned()) {
             pinsPositions.push_back(quad->pinPos() - quad->getPoint(quad->pinUV(), REF_POS));
         }
@@ -573,48 +946,20 @@ std::vector<Point::VectorType> Lattice::pinsDisplacementVectors() const {
     return pinsPositions;
 }
 
-Point::Affine Lattice::quadRefTransformation(int quadKey) {
-    if (!contains(quadKey)) {
-        qWarning() << "quadRefTransformation: lattice does not contains quadKey " << quadKey;
-        return Point::Affine::Identity();
+/**
+ * Displace all pinned quads to their target position.
+ * Change the given group's lattice dstPos, but due to the forced displacement, adjacent non-pinned quads may become degenerated. 
+ * Therefore it should be followed by ARAP regularization.
+ */
+void Lattice::displacePinsQuads(PosTypeIndex dstPos) {
+    for (QuadPtr q : m_quads) {
+        if (!q->isPinned()) continue;
+        Point::VectorType displacement = q->pinPos() - q->getPoint(q->pinUV(), dstPos); // Displacement from TARGET_POS to keep its orientation
+        for (unsigned int i = 0; i < 4; ++i) {
+            q->corners[i]->coord(dstPos) += displacement;
+        }
     }
-    int x, y;
-    keyToCoord(quadKey, x, y);
-    QuadPtr quad = m_hashTable.value(quadKey);
-    Point::VectorType positions[4] = {Point::VectorType(x, y), Point::VectorType(x + 1, y), Point::VectorType(x + 1, y + 1), Point::VectorType(x, y + 1)};
-    Point::VectorType originalPosMean = Point::VectorType::Zero();
-    Point::VectorType refPosMean = Point::VectorType::Zero();
-    for (int i = 0; i < NUM_CORNERS; ++i) {
-        originalPosMean += m_cellSize * positions[i] + Point::VectorType(m_oGrid.x(), m_oGrid.y());
-        refPosMean += quad->corners[i]->coord(REF_POS);
-    }
-    originalPosMean /= (double)NUM_CORNERS;
-    refPosMean /= (double)NUM_CORNERS;
-
-    Matrix2d PiPi, QiPi;
-    PiPi.setZero();
-    QiPi.setZero();
-    for (int i = 0; i < NUM_CORNERS; ++i) {
-        Point::VectorType pi = (m_cellSize * positions[i] + Point::VectorType(m_oGrid.x(), m_oGrid.y())) - originalPosMean;
-        Point::VectorType qi = quad->corners[i]->coord(REF_POS) - refPosMean;
-        Matrix2d pipi = pi * pi.transpose();
-        Matrix2d qipi = qi * pi.transpose();
-        PiPi += pipi;
-        QiPi += qipi;
-    }
-    Matrix2d A = QiPi * PiPi.inverse();
-    Point::VectorType t = refPosMean - A * originalPosMean;
-    return Point::Affine(Point::Translation(t) * Point::Rotation(A));
-}
-
-void Lattice::resetDeformation() {
-    for (int i = 0; i < m_corners.size(); ++i) {
-        m_corners[i]->coord(INTERP_POS) = m_corners[i]->coord(REF_POS);
-        m_corners[i]->coord(TARGET_POS) = m_corners[i]->coord(REF_POS);
-        m_corners[i]->coord(DEFORM_POS) = m_corners[i]->coord(REF_POS);
-    }
-    m_arapDirty = true;
-    m_precomputeDirty = true;
+    setArapDirty();
 }
 
 void Lattice::drawLattice(QPainter &painter, qreal interpFactor, const QColor &color, PosTypeIndex type) const {
@@ -623,20 +968,40 @@ void Lattice::drawLattice(QPainter &painter, qreal interpFactor, const QColor &c
     painter.setPen(gridPen);
     painter.setOpacity(1.0);
 
-    for (auto it = m_hashTable.constBegin(); it != m_hashTable.constEnd(); ++it) {
+    const Point::Affine A = m_keyframe->rigidTransform(type == REF_POS ? 0 : 1);
+
+    for (auto it = m_quads.constBegin(); it != m_quads.constEnd(); ++it) {
         QuadPtr quad = it.value();
         if (quad == nullptr) {
             qWarning("quad error");
             continue;
         }
 
+        quad->computeCentroid(INTERP_POS);
         for (int i = 0; i < 4; i++) {
             Corner *c0 = quad->corners[i];
             Corner *c1 = quad->corners[(i + 1) % 4];
             if (c0 == nullptr) qWarning("Corner error");
-            Point::VectorType p0 = c0->coord(type);
-            Point::VectorType p1 = c1->coord(type);
+            Point::VectorType p0 = A * c0->coord(type);
+            Point::VectorType p1 = A * c1->coord(type);
             painter.drawLine(QPointF(p0.x(), p0.y()), QPointF(p1.x(), p1.y()));
+            if ((quad->nbBackwardStrokes() == 0 && quad->nbForwardStrokes() == 0) && quad->isEmpty() && k_drawDebugLattice) {
+                gridPen.setWidthF(0.5f);
+                painter.setPen(gridPen);
+                quad->computeCentroid(REF_POS);
+                Point::VectorType centroid = quad->centroid(REF_POS);
+                painter.drawEllipse(QPointF(centroid.x(), centroid.y()), 2, 2);
+            }
+            if (quad->isPivot() && k_drawDebugLattice) {
+                gridPen.setWidthF(0.5f);
+                gridPen.setColor(Qt::magenta);
+                painter.setPen(gridPen);
+                quad->computeCentroid(REF_POS);
+                Point::VectorType centroid = quad->centroid(REF_POS);
+                painter.drawEllipse(QPointF(centroid.x(), centroid.y()), 1, 1);
+                gridPen.setColor(color);
+                painter.setPen(gridPen);
+            }
         }
     }
 }
@@ -645,11 +1010,15 @@ void Lattice::drawLattice(QPainter &painter, const QColor &color, VectorKeyFrame
     QPen gridPen(QBrush(color, Qt::SolidPattern), 1.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     gridPen.setColor(color);
     painter.setPen(gridPen);
-    painter.setOpacity(0.5);
+    painter.setOpacity(1.0);
 
-    const std::vector<Point::VectorType> &corners = keyframe->inbetweenCorners(inbetween - 1).value(groupID);
+    const int stride = keyframe->inbetweens().size();
+    float t = stride > 1 ?  float(inbetween) / (stride - 1) : 0.0f;
+    const Point::Affine A = keyframe->rigidTransform(t);
 
-    for (auto it = m_hashTable.constBegin(); it != m_hashTable.constEnd(); ++it) {
+    const std::vector<Point::VectorType> &corners = keyframe->inbetweenCorners(inbetween).value(groupID);
+
+    for (auto it = m_quads.constBegin(); it != m_quads.constEnd(); ++it) {
         QuadPtr quad = it.value();
         if (quad == nullptr) {
             qCritical() << "drawLattice: null quad";
@@ -664,17 +1033,19 @@ void Lattice::drawLattice(QPainter &painter, const QColor &color, VectorKeyFrame
             if (c0->getKey() >= corners.size() || c1->getKey() >= corners.size()) {
                 qCritical() << "drawLattice: invalid corner id";
             }
-            Point::VectorType p0 = corners[c0->getKey()];
-            Point::VectorType p1 = corners[c1->getKey()];
+            Point::VectorType p0 = A * corners[c0->getKey()];
+            Point::VectorType p1 = A * corners[c1->getKey()];
             painter.drawLine(QPointF(p0.x(), p0.y()), QPointF(p1.x(), p1.y()));
         }
+        // quad->computeCentroid(INTERP_POS);
+        // painter.drawText(EQ_POINT(quad->centroid(INTERP_POS)), QString("%1 | %2").arg(quad->forwardStrokes().size(), quad->backwardStrokes().size()));
     }
 }
 
 void Lattice::drawPins(QPainter &painter) {
     static QPen p(QBrush(Qt::darkRed, Qt::SolidPattern), 1.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     painter.setPen(p);
-    for (QuadPtr quad : m_hashTable) {
+    for (QuadPtr quad : m_quads) {
         if (quad->isPinned()) {
             QPointF pinPos = QPointF(quad->pinPos().x(), quad->pinPos().y());
             Point::VectorType pinUV = quad->getPoint(quad->pinUV(), TARGET_POS);
@@ -690,37 +1061,149 @@ void Lattice::drawPins(QPainter &painter) {
     }
 }
 
-/**
- * Precompute the sparse matrices P^T and prefactor P^T*P for later computations
- * See Baxter et al. 2008
- */
+
+void Lattice::drawCornersTrajectories(QPainter &painter, const QColor &color, Group *group, VectorKeyFrame *key, bool linearInterpolation) {
+    painter.save();
+    QPen gridPen(Qt::NoBrush, 0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    painter.setPen(gridPen);
+    if (linearInterpolation) {
+        int i = 0;
+        for (Corner *c : m_corners) {
+            gridPen.setColor(QColor(40 + 180 * i / float(m_corners.size()), 20, 180 - 120 * i / float(m_corners.size())));
+            painter.setPen(gridPen);
+            Point::VectorType p0 = c->coord(REF_POS);
+            Point::VectorType p1 = c->coord(TARGET_POS);
+            painter.drawLine(QPointF(p0.x(), p0.y()), QPointF(p1.x(), p1.y()));
+            i++;
+        }
+    } else {
+        precompute();
+        float t;
+        Point::VectorType prev;
+        int idx = 0;
+        for (Corner *c : m_corners) {
+            prev = c->coord(REF_POS);
+            gridPen.setColor(QColor(40 + 180 * idx / float(m_corners.size()), 20, 180 - 120 * idx / float(m_corners.size())));
+            painter.setPen(gridPen);
+            for (int i = 1; i < 40; ++i) {
+                t = (float)i / (float)40;
+                interpolateARAP(t, group->spacingAlpha(t), group->globalRigidTransform(t));
+                painter.drawLine(QPointF(prev.x(), prev.y()), QPointF(c->coord(INTERP_POS).x(), c->coord(INTERP_POS).y()));
+                prev = c->coord(INTERP_POS);
+            }
+            idx++;
+        }
+        m_arapDirty = true;
+        m_precomputeDirty = true;
+    }
+    painter.restore();
+}
+
+void Lattice::createBuffer(QOpenGLShaderProgram *program, QOpenGLExtraFunctions *functions) {
+    if (m_bufferCreated) return;
+
+    m_vao.create();
+    m_vao.bind();
+
+    m_vbo.create();
+    m_vbo.bind();
+    m_vbo.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+
+    m_ebo.create();
+    m_ebo.bind();
+    m_ebo.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+
+    // vtx pos
+    int vLoc = program->attributeLocation("vertex");
+    program->enableAttributeArray(vLoc); 
+    program->setAttributeBuffer(vLoc, GL_FLOAT, 0, 2, sizeof(LatticeVtx));
+
+    // vtx flags
+    int fLoc = program->attributeLocation("iFlags");
+    program->enableAttributeArray(fLoc); 
+    // fuck qt 
+    // program->setAttributeBuffer(fLoc, GL_UNSIGNED_INT, offsetof(LatticeVtx, flags), 1, sizeof(LatticeVtx));
+    functions->glVertexAttribIPointer(fLoc, 1, GL_UNSIGNED_BYTE, sizeof(LatticeVtx), (void *)offsetof(LatticeVtx, flags));
+
+    m_vao.release();
+    m_vbo.release();
+    m_ebo.release();
+
+    updateBuffer();
+
+    m_bufferCreated = true;
+    m_bufferDestroyed = false; 
+}
+
+void Lattice::destroyBuffer() {
+    if (!m_bufferCreated) return;
+    StopWatch s("Destroying lattice buffers");
+    m_ebo.destroy();
+    m_vbo.destroy();
+    m_vao.destroy();
+    m_bufferDestroyed = true;
+    m_bufferCreated = false;
+    s.stop();
+}
+
+void Lattice::updateBuffer() {
+    markOutline();
+
+    std::vector<LatticeVtx> vertices(m_corners.size());
+    std::vector<unsigned int> indices(m_quads.size() * 4);
+
+    for (int i = 0; i < m_corners.size(); ++i) {
+        vertices[i].x = m_corners[i]->coord(TARGET_POS).x();
+        vertices[i].y = m_corners[i]->coord(TARGET_POS).y();
+        vertices[i].flags = (GLubyte)(m_corners[i]->flags().to_ulong());
+    }
+
+    int i = 0;
+    for (QuadPtr quad : m_quads) {
+        indices[4 * i] = quad->corners[0]->getKey();
+        indices[4 * i + 1] = quad->corners[1]->getKey();
+        indices[4 * i + 2] = quad->corners[3]->getKey();
+        indices[4 * i + 3] = quad->corners[2]->getKey();
+        ++i;
+    }
+    
+    m_vbo.bind(); 
+    m_vbo.allocate(vertices.data(), vertices.size() * sizeof(LatticeVtx));
+    m_vbo.release();
+
+    m_ebo.bind(); 
+    m_ebo.allocate(indices.data(), indices.size() * sizeof(GLuint));
+    m_ebo.release();    
+}
+
+// Precompute the sparse matrix P and store it as P^T and P^T*P for later computations
 void Lattice::precompute() {
     if (!m_singleConnectedComponent) {
-        qWarning() << "Cannot precompute a lattice with multiple connected components! ";
+        qWarning() << "Cannot precompute a lattice with multiple connected components!";
         return;
     }
 
-    qDebug() << "PRECOMPUTING GRID (Q: " << m_hashTable.size() << ", C: " << m_corners.size() << ")";
+    qDebug() << "PRECOMPUTING GRID (Q: " << m_quads.size() << ", C: " << m_corners.size() << ")";
     StopWatch sw("Precompute ARAP LHS");
     std::vector<TripletD> P_triplets;
-    int nQuads = m_hashTable.size();
+    int nQuads = m_quads.size();
     int nCorners = m_corners.size();
     int P_rows = 8 * nQuads;
     int triRow = 0;
-    QuadPtr q = *m_hashTable.constBegin();
+    QuadPtr q = *m_quads.constBegin();
     double size = (q->corners[TOP_RIGHT]->coord(REF_POS) - q->corners[TOP_LEFT]->coord(REF_POS)).norm();
     double triArea = size * size / 2.0;
 
     // Compute P (sparse) and store its transpose to construct the RHS of the equation later
     // TODO refactorize concatenation
-    for (auto it = m_hashTable.constBegin(); it != m_hashTable.constEnd(); ++it) {
+    for (auto it = m_quads.constBegin(); it != m_quads.constEnd(); ++it) {
         q = it.value();
         computePStar(q, TOP_LEFT, TOP_RIGHT, triRow, false, P_triplets);
         triRow++;
         computePStar(q, TOP_RIGHT, BOTTOM_RIGHT, triRow, false, P_triplets);
         triRow++;
     }
-    for (auto it = m_hashTable.constBegin(); it != m_hashTable.constEnd(); ++it) {
+    for (auto it = m_quads.constBegin(); it != m_quads.constEnd(); ++it) {
         q = it.value();
         computePStar(q, TOP_LEFT, TOP_RIGHT, triRow, true, P_triplets);
         triRow++;
@@ -758,8 +1241,7 @@ void Lattice::precompute() {
     for (unsigned int constraintIdx : m_constraintsIdx) {
         const Trajectory *traj = m_keyframe->trajectoryConstraintPtr(constraintIdx);
         const UVInfo &latticeCoord = traj->latticeCoord();
-
-        QuadPtr quad = m_hashTable[latticeCoord.quadKey];
+        QuadPtr quad = m_quads[latticeCoord.quadKey];
         // the constraint coeff vector and its transpose are set at the same time
         LHS.insert(idx, quad->corners[TOP_LEFT]->getKey()) = LHS.insert(quad->corners[TOP_LEFT]->getKey(), idx) = (1.0 - latticeCoord.uv.x()) * (1.0 - latticeCoord.uv.y());
         LHS.insert(idx, quad->corners[TOP_RIGHT]->getKey()) = LHS.insert(quad->corners[TOP_RIGHT]->getKey(), idx) = latticeCoord.uv.x() * (1.0 - latticeCoord.uv.y());
@@ -786,18 +1268,8 @@ void Lattice::precompute() {
     sw.stop();
 }
 
-/**
- * Compute the interpolation of the lattice between its REF_POS and TARGET_POS.
- * Stores the results in INTERP_POS.
- * The resulting interpolated lattice can be additionally transformed by a given rigid transformation. 
- * 
- * @param alphaLinear Linear interpolating factor between the two adjacent keyframes (from the timeline: (curFrame - prevKeyFrame) / (nextKeyFrame - prevKeyFrame))
- * @param alpha Remapping of the linear interpolating factor by the group's spacing function. This is what controls the interpolation.  
- * @param globalRigidTransform Global rigid transformation applied after the interpolation.
- * @param useRigidTransform If true the global rigid transformation is applied.
- */
-void Lattice::interpolateARAP(float alphaLinear, float alpha, const Point::Affine &globalRigidTransform, bool useRigidTransform) {
-    qDebug() << "** Interpolating lattice at t=" << alpha;
+void Lattice::interpolateARAP(qreal alphaLinear, qreal alpha, const Point::Affine &globalRigidTransform, bool useRigidTransform) {
+    qDebug() << "** INTERP " << alpha;
     StopWatch sw("ARAP interpolation");
 
     useRigidTransform = useRigidTransform && k_useGlobalRigidTransform;
@@ -810,18 +1282,18 @@ void Lattice::interpolateARAP(float alphaLinear, float alpha, const Point::Affin
         return;
     }
 
-    int nQuads = m_hashTable.size();
+    int nQuads = m_quads.size();
     MatrixXd A(2, 8 * nQuads);
     qreal t = alpha;
 
     // Compute A(t)
     QuadPtr q;
     int i = 0;
-    for (auto it = m_hashTable.begin(); it != m_hashTable.end(); ++it) {
+    for (auto it = m_quads.begin(); it != m_quads.end(); ++it) {
         q = it.value();
         computeQuadA(q, A, i, t, false);
     }
-    for (auto it = m_hashTable.begin(); it != m_hashTable.end(); ++it) {
+    for (auto it = m_quads.begin(); it != m_quads.end(); ++it) {
         q = it.value();
         computeQuadA(q, A, i, t, true);
     }
@@ -858,8 +1330,8 @@ void Lattice::interpolateARAP(float alphaLinear, float alpha, const Point::Affin
     }
 
     // Setting new interpolated vertices in corners INTERP_POS coordinates
-    Corner *c;
     for (auto it = m_corners.begin(); it != m_corners.end(); ++it) {
+        Corner *c;
         c = *it;
         i = c->getKey();
         c->coord(INTERP_POS) = V.row(i);
@@ -872,9 +1344,33 @@ void Lattice::interpolateARAP(float alphaLinear, float alpha, const Point::Affin
     sw.stop();
 }
 
-/** 
- * Compute P* for the two triangles of the given quad and add them to the sparse matrix P (via the triplet list)
- * See Baxter et al. 2008
+/**
+ * Check on which side the quad should be added (if q1 and q2 share a stroke)
+ */
+bool Lattice::checkQuadsShareStroke(VectorKeyFrame *keyframe, QuadPtr q1, QuadPtr q2, std::vector<QuadPtr> &newQuads) {
+    bool sharedStroke = false;
+    for (auto strokeIntervals = q1->forwardStrokes().constBegin(); strokeIntervals != q1->forwardStrokes().constEnd(); ++strokeIntervals) {
+        if (q2->forwardStrokes().contains(strokeIntervals.key())) {
+            const Intervals intervalsQ1 = q1->forwardStrokes().value(strokeIntervals.key());
+            const Intervals intervalsQ2 = q2->forwardStrokes().value(strokeIntervals.key());
+            for (const Interval &intervalQ1 : intervalsQ1) {
+                for (const Interval &intervalQ2 : intervalsQ2) {
+                    if (intervalQ1.connected(intervalQ2)) {
+                        Interval interval(std::min(intervalQ1.from(), intervalQ2.from()), std::max(intervalQ1.to(), intervalQ2.to()));
+                        enforceManifoldness(keyframe->stroke(strokeIntervals.key()), interval, newQuads);
+                        sharedStroke = true;
+                    }
+                }
+            }
+        }
+        if (sharedStroke) break;
+    }
+    return sharedStroke;
+}
+
+/**
+ * Compute P* for the two triangles of the given quad and add them to the sparse matrix P (via the triplet list).
+ * See Baxter et al. 2008 
  */
 void Lattice::computePStar(QuadPtr q, int cornerI, int cornerJ, int triRow, bool inverseOrientation, std::vector<TripletD> &P_triplets) {
     MatrixXd P(3, 2), D(2, 3), P_star(2, 3);
@@ -904,18 +1400,15 @@ void Lattice::computePStar(QuadPtr q, int cornerI, int cornerJ, int triRow, bool
     P_triplets.push_back(TripletD(2 * triRow + 1, k, P_star(1, 2)));
 }
 
-/**
- * Compute interpolated target linear maps A(t) (concatenated for the two triangles of the given quad)
- * See Baxter et al. 2008
- */
-
+// Compute A(t) (concatenated for the two triangles of the given quad)
 void Lattice::computeQuadA(QuadPtr q, MatrixXd &At, int &i, float t, bool inverseOrientation) {
     Matrix2d A_interp, I;
     Matrix2d A, Rt, S;
     I = Matrix2d::Identity();
     if (inverseOrientation) t = 1.0f - t;
 
-    // Compute and concatenate the interpolated linear transformation of the triangle formed by CornerA, CornerB and the bottom left corner of the quad
+    // Compute and concatenate the interpolated linear transformation of the triangle formed by CornerA, CornerB and the bottom left corner
+    // of the quad
     auto computeTriangleA = [&](CornerIndex cornerA, CornerIndex cornerB) {
         Arap::computeJAM(q, cornerA, cornerB, inverseOrientation, A);
         double angle = Arap::polarDecomp(A, S);
@@ -939,29 +1432,29 @@ void Lattice::computeQuadA(QuadPtr q, MatrixXd &At, int &i, float t, bool invers
 
 void Lattice::applyTransform(const Point::Affine &transform, PosTypeIndex ref, PosTypeIndex dst) {
     for (Corner *corner : m_corners) {
-        corner->coord(dst) = transform * corner->coord(ref);
+        if (corner->flag(MOVABLE)) {
+            corner->coord(dst) = transform * corner->coord(ref);
+        }
     }
 }
 
 void Lattice::copyPositions(const Lattice *dst, PosTypeIndex srcPos, PosTypeIndex dstPos) {
-    for (auto it = dst->m_hashTable.constBegin(); it != dst->m_hashTable.constEnd(); ++it) {
-        QuadPtr quad = m_hashTable[it.key()];
+    for (auto it = dst->m_quads.constBegin(); it != dst->m_quads.constEnd(); ++it) {
+        QuadPtr quad = m_quads[it.key()];
         for (int i = 0; i < 4; ++i) {
             quad->corners[i]->coord(dstPos) = it.value()->corners[i]->coord(srcPos);
         }
     }
 }
 
-/**
- * Assume target is a copy of the lattice (same topology and quad keys)
- * Set srcPos corners position to the given target lattice targetPos corners position
- */
+// assume copied lattice (same topology and quad keys)
+// set this lattice's srcPos corners position to the given target lattice targetPos corners position
 void Lattice::moveSrcPosTo(const Lattice *target, PosTypeIndex srcPos, PosTypeIndex targetPos) {
     std::set<int> visitedCorners;
     Point::VectorType posTarget, offset;
-    for (auto it = target->m_hashTable.constBegin(); it != target->m_hashTable.constEnd(); ++it) {
+    for (auto it = target->m_quads.constBegin(); it != target->m_quads.constEnd(); ++it) {
         QuadPtr quadTarget = it.value();
-        QuadPtr quad = m_hashTable[it.key()];
+        QuadPtr quad = m_quads[it.key()];
         for (int i = 0; i < 4; ++i) {
             if (!visitedCorners.insert(quad->corners[i]->getKey()).second) continue;
             quad->corners[i]->coord(srcPos) = quadTarget->corners[i]->coord(targetPos);
@@ -979,43 +1472,135 @@ Point::VectorType Lattice::centerOfGravity(PosTypeIndex type) {
 }
 
 /**
- * Returns true if the 2 given quads are adjacent
+ * Remove any deformation applied to the grid
  */
-bool Lattice::areQuadsConnected(int quadKeyA, int quadKeyB) {
+void Lattice::resetDeformation() {
+    for (int i = 0; i < m_corners.size(); ++i) {
+        m_corners[i]->coord(INTERP_POS) = m_corners[i]->coord(REF_POS);
+        m_corners[i]->coord(TARGET_POS) = m_corners[i]->coord(REF_POS);
+        m_corners[i]->coord(DEFORM_POS) = m_corners[i]->coord(REF_POS);
+    }
+    m_scaling = Point::Affine::Identity();
+    m_scale = 1.0;
+    m_arapDirty = true;
+    m_precomputeDirty = true;
+}
+
+/**
+ * Return the projection of point p onto the closest edge of the grid.
+ * @param p the point to project
+ * @param outQuad quad key adjacent to the projected point
+ */
+Point::VectorType Lattice::projectOnEdge(const Point::VectorType &p, int &outQuad) const {
+    Point::VectorType closestProj = Point::VectorType(99999, 99999);
+    Point::VectorType proj;
+    for (QuadPtr quad : m_quads) { // yeah it's not efficient
+        for (int i = 0; i < 4; ++i) {
+            proj = Geom::projectPointToSegment(quad->corners[i]->coord(REF_POS), quad->corners[(i + 1) % 4]->coord(REF_POS), p);
+            if ((p - proj).squaredNorm() < (p - closestProj).squaredNorm()) {
+                closestProj = proj;
+                outQuad = quad->key();
+            }            
+        }
+    }
+    return closestProj;
+}
+
+/**
+ * Return true if the two given quads are adjacent (8-neighborhood) 
+ */
+bool Lattice::areQuadsConnected(int quadKeyA, int quadKeyB) const {
     int xA, yA, xB, yB;
     keyToCoord(quadKeyA, xA, yA);
     keyToCoord(quadKeyB, xB, yB);
-    return std::abs(xA - xB) <= 1 || std::abs(yA - yB) <= 1;
+    return std::abs(xA - xB) <= 1 && std::abs(yA - yB) <= 1;
+}
+
+/**
+ * Return a list of the adjacent quad keys of the corner. It always return all 4 keys even if the quad does not exist!
+ */
+void Lattice::adjacentQuads(Corner *corner, std::array<int, 4> &neighborKeys) {
+    int firstAdjacentQuadPos = -1;
+    std::array<int, 4> offsets = {+1, m_nbCols, -1, -m_nbCols}; // TL->TR, TR->BR, BR->BL, BL->TL
+    
+    for (int i = 0; i < NUM_CORNERS; ++i) {
+        if (corner->quads((CornerIndex)i) != nullptr) {
+            firstAdjacentQuadPos = i;
+            neighborKeys[i] = corner->quads((CornerIndex)i)->key();
+            break;
+        }
+    }
+
+    if (firstAdjacentQuadPos == -1) {
+        qCritical() << "Error in Lattice::adjacentQuads: corner does not have any adjacent quad!";
+    }
+    
+    int prevPos = firstAdjacentQuadPos;
+    int prevKey = neighborKeys[firstAdjacentQuadPos];
+    for (int i = 1; i < NUM_CORNERS; ++i) {
+        int curPos = Utils::pmod(firstAdjacentQuadPos + i, (int)NUM_CORNERS);
+        neighborKeys[curPos] = prevKey + offsets[prevPos];
+        prevPos = curPos;
+        prevKey = neighborKeys[curPos];
+    }
+}
+
+/**
+ * Return a list of the adjacent quad keys of the corner. It always return all 8 keys even if the quad does not exist!
+ */
+void Lattice::adjacentQuads(QuadPtr quad, std::array<int, 8> &neighborKeys) {
+    int x, y;
+    keyToCoord(quad->key(), x, y);
+    static int dx[8] = {-1, 0, 1, 1, 1, 0, -1, -1};
+    static int dy[8] = {-1, -1, -1, 0, 1, 1, 1, 0};
+    for (int i = 0; i < 8; ++i) {
+        neighborKeys[i] = coordToKey(x + dx[i], y + dy[i]);
+    }
+}
+
+/**
+ * Return a pointer to the adjacent quad that share the given edge.
+ * Return nullptr if no such quad exists.
+ */
+QuadPtr Lattice::adjacentQuad(QuadPtr quad, EdgeIndex edge) {
+    if (quad == nullptr) return nullptr;
+    static int dx[NUM_EDGES] = {0, 1, 0, -1};
+    static int dy[NUM_EDGES] = {1, 0, -1, 0};
+    int x, y, k;
+    keyToCoord(quad->key(), x, y);
+    k = coordToKey(x + dx[(int)edge], y + dy[(int)edge]);    
+    return m_quads.value(k, nullptr);
 }
 
 /**
  * Check if the lattice is a single connected component (DFS), save the result in the flag m_singleConnectedComponent
+ * TODO: dirty system
  */
 bool Lattice::isConnected() {
-    if (m_hashTable.empty()) {
+    if (m_quads.empty()) {
         m_singleConnectedComponent = false;
         return false;
     }
 
-    for (QuadPtr &quad : m_hashTable) {
-        quad->setFlag(false);
+    for (QuadPtr &quad : m_quads) {
+        quad->setMiscFlag(false);
     }
 
     QStack<int> toVisit;
-    toVisit.push((*m_hashTable.begin())->key());
+    toVisit.push((*m_quads.begin())->key());
 
     // Add the quad to the stack if its coordinates are valid and if its visited flag is false
     auto pushQuad = [&](int x, int y, int key) {
-        if (x >= 0 && x < nbCols() && y >= 0 && y < nbRows() && m_hashTable.contains(key) && !m_hashTable.value(key)->flag()) {
-            toVisit.push(m_hashTable.value(key)->key());
+        if (x >= 0 && x < nbCols() && y >= 0 && y < nbRows() && m_quads.contains(key) && !m_quads.value(key)->miscFlag()) {
+            toVisit.push(m_quads.value(key)->key());
         }
     };
 
     int x, y;
     while (!toVisit.isEmpty()) {
-        const QuadPtr &curQuad = m_hashTable.value(toVisit.pop());
-        if (curQuad->flag()) continue;
-        curQuad->setFlag(true);
+        const QuadPtr &curQuad = m_quads.value(toVisit.pop());
+        if (curQuad->miscFlag()) continue;
+        curQuad->setMiscFlag(true);
         keyToCoord(curQuad->key(), x, y);
         for (int i = x - 1; i <= x + 1; ++i) {
             for (int j = y - 1; j <= y + 1; ++j) {
@@ -1025,8 +1610,8 @@ bool Lattice::isConnected() {
         }
     }
 
-    for (QuadPtr &quad : m_hashTable) {
-        if (!quad->flag()) {
+    for (QuadPtr &quad : m_quads) {
+        if (!quad->miscFlag()) {
             m_singleConnectedComponent = false;
             return false;
         }
@@ -1036,16 +1621,13 @@ bool Lattice::isConnected() {
     return true;
 }
 
-/**
- * Output list of connected components as lists of quad keys
- * TODO output list of lattices?
- */
+// TODO output list of lattices?
 void Lattice::getConnectedComponents(std::vector<std::vector<int>> &outputComponents, bool overrideFlag) {
     outputComponents.clear();
 
     if (overrideFlag) {
-        for (QuadPtr &quad : m_hashTable) {
-            quad->setFlag(false);
+        for (QuadPtr &quad : m_quads) {
+            quad->setMiscFlag(false);
         }
     }
 
@@ -1053,8 +1635,8 @@ void Lattice::getConnectedComponents(std::vector<std::vector<int>> &outputCompon
 
     // Add the quad to the stack if its coordinate are valid and if its flag is false
     auto pushQuad = [&](int x, int y, int key) {
-        if (x >= 0 && x < nbCols() && y >= 0 && y < nbRows() && m_hashTable.contains(key) && !m_hashTable.value(key)->flag()) {
-            toVisit.push(m_hashTable.value(key)->key());
+        if (x >= 0 && x < nbCols() && y >= 0 && y < nbRows() && m_quads.contains(key) && !m_quads.value(key)->miscFlag()) {
+            toVisit.push(m_quads.value(key)->key());
         }
     };
 
@@ -1064,8 +1646,8 @@ void Lattice::getConnectedComponents(std::vector<std::vector<int>> &outputCompon
 
         // Are there any non visited quad remaining?
         Quad *start = nullptr;
-        for (QuadPtr &quad : m_hashTable) {
-            if (!quad->flag()) {
+        for (QuadPtr &quad : m_quads) {
+            if (!quad->miscFlag()) {
                 start = quad.get();
             }
         }
@@ -1077,9 +1659,9 @@ void Lattice::getConnectedComponents(std::vector<std::vector<int>> &outputCompon
         int x, y;
         toVisit.push(start->key());
         while (!toVisit.isEmpty()) {
-            const QuadPtr &curQuad = m_hashTable.value(toVisit.pop());
-            if (curQuad->flag()) continue;
-            curQuad->setFlag(true);
+            const QuadPtr &curQuad = m_quads.value(toVisit.pop());
+            if (curQuad->miscFlag()) continue;
+            curQuad->setMiscFlag(true);
             connectedComponent.push_back(curQuad->key());
             keyToCoord(curQuad->key(), x, y);
             for (int i = x - 1; i <= x + 1; ++i) {
@@ -1095,15 +1677,227 @@ void Lattice::getConnectedComponents(std::vector<std::vector<int>> &outputCompon
     }
 }
 
+
+/**
+ * Returns a corner on the outline of the grid
+ * TODO: precompute when constructing the grid/editing it
+ */
+Corner *Lattice::findBoundaryCorner(PosTypeIndex coordType) {
+    double minX = std::numeric_limits<double>::max();
+    Corner *firstCorner = nullptr;
+
+    // Find the corner with minimum x-component, no assumption about the geometry of the source grid
+    for (Corner *corner : m_corners) {
+        corner->setMiscFlag(false);
+        corner->setFlag(BOUNDARY, false);
+        if (corner->coord(coordType).x() < minX) {
+            minX = corner->coord(coordType).x();
+            firstCorner = corner;        
+        }
+    }
+
+    return firstCorner;
+}
+
+/**
+ * Given a corner on the exterior boundary of the grid, returns a non-visited adjacent corner on the exterior boundary.
+ * If no such corner exists, returns nullptr
+ */
+Corner *Lattice::findNextBoundaryCorner(Corner *corner) {
+    for (int i = 0; i < NUM_CORNERS; ++i) {
+        QuadPtr quad = corner->quads((CornerIndex)i);
+        if (quad == nullptr) continue;
+        // Find the corner position in the quad
+        int cornerPosition = NUM_CORNERS;
+        for (int j = 0; j < NUM_CORNERS; ++j) {
+            if (quad->corners[j] == corner) {
+                cornerPosition = j;                    
+                break;
+            }
+        }
+        // Check neighbors
+        Corner *right = quad->corners[((cornerPosition+1) % NUM_CORNERS)]; 
+        if (!right->miscFlag() && right->nbQuads() < 4 && quadsInCommon(corner, right) == 1) {
+            return right;
+        }
+        Corner *left = quad->corners[((cornerPosition-1+NUM_CORNERS) % NUM_CORNERS)]; 
+        if (!left->miscFlag() && left->nbQuads() < 4 && quadsInCommon(corner, left) == 1) {
+            return left;
+        }
+    }
+    return (Corner *)nullptr;
+}
+
+int Lattice::quadsInCommon(Corner *c1, Corner *c2) {
+    /**
+     * We need this check because an edge between 2 boundary vertices can still be an interior edge
+     * The edge (c1,c2) is "interior" if they c1 and c2 share 2 or more adjacent quads
+     */
+    int count = 0;
+    for (int i = 0; i < NUM_CORNERS; ++i) {
+        QuadPtr q1 = c1->quads((CornerIndex)i);
+        if (q1 == nullptr) continue;
+        for (int j = 0; j < NUM_CORNERS; ++j) {
+            QuadPtr q2 = c2->quads((CornerIndex)j);
+            if (q2 != nullptr && q1->key() == q2->key()) count += 1;
+        }
+    }
+    return count;
+}
+
+/**
+ * Set the BOUNDARY flag in all boundary corners of the grid to true
+ */
+void Lattice::markOutline() {
+    Corner *corner = findBoundaryCorner(REF_POS);
+    do {
+        corner->setFlag(BOUNDARY, true);
+        corner->setMiscFlag(true);
+        corner = findNextBoundaryCorner(corner);
+    } while (corner != nullptr);
+}
+
+/**
+ * Check if a polyline segment crosses over a cell without having a vertex in it. If this is the case, set this quad key in quadKeyOut.
+ * Returns true if the segment crosses over a cell, false otherwise.
+ */
+bool Lattice::checkPotentialBowtie(Point::VectorType &prevPoint, Point::VectorType &curPoint, int &quadKeyOut) {
+    QuadPtr q;
+    int keyPrev, keyCur; 
+    contains(prevPoint, REF_POS, q, keyPrev);
+    contains(curPoint, REF_POS, q, keyCur);
+
+    // If the two successive keys are adjacent then the grid doesn't need refinement
+    if (std::abs(keyPrev - keyCur) != nbCols() + 1 && std::abs(keyPrev - keyCur) != nbCols() - 1) {
+        return false;
+    }
+
+    // In this case the grid needs refinement, we need to determine where the new cell must be added. To do this, we first identify the shared corner
+    int sharedCornerKey;
+    QuadPtr prevQuad = m_quads[keyPrev];
+    int keyOptionsPositive, keyOptionsNegative;
+    if (keyCur == keyPrev - nbCols() - 1) {
+        sharedCornerKey = prevQuad->corners[TOP_LEFT]->getKey();
+        keyOptionsPositive = keyPrev - 1;
+        keyOptionsNegative = keyPrev - nbCols();
+    } else if (keyCur == keyPrev - nbCols() + 1) {
+        sharedCornerKey = prevQuad->corners[TOP_RIGHT]->getKey();
+        keyOptionsPositive = keyPrev - nbCols();
+        keyOptionsNegative = keyPrev + 1;
+    } else if (keyCur == keyPrev + nbCols() - 1) {
+        sharedCornerKey = prevQuad->corners[BOTTOM_LEFT]->getKey();
+        keyOptionsPositive = keyPrev + nbCols();
+        keyOptionsNegative = keyPrev - 1;
+    } else if (keyCur == keyPrev + nbCols() + 1) {
+        sharedCornerKey = prevQuad->corners[BOTTOM_RIGHT]->getKey();
+        keyOptionsPositive = keyPrev + 1;
+        keyOptionsNegative = keyPrev + nbCols();
+    }
+
+    Point::VectorType sharedCornerPos = m_corners[sharedCornerKey]->coord(REF_POS);
+    Point::VectorType prevToSharedCorner = sharedCornerPos - prevPoint;
+    Point::VectorType segment = curPoint - prevPoint;
+    double wedge = prevToSharedCorner.x() * segment.y() - prevToSharedCorner.y() * segment.x();
+    quadKeyOut = wedge < 0 ? keyOptionsPositive : keyOptionsNegative;
+    return true;
+}
+
+/**
+ * Add empty quads when necessary to keep the lattice manifold
+ * TODO: propagate TARGET_POS coords to the new quads 
+ */
+void Lattice::enforceManifoldness(Group *group) {
+    std::vector<QuadPtr> newQuads;
+    VectorKeyFrame *keyframe = group->getParentKeyframe();
+    int nbNewQuads = 0;
+
+    // Check for bowtie corners
+    QVector<Corner *> corners = m_corners;
+    for (Corner *corner : corners) {
+        if (corner->nbQuads() != 2) continue;
+        for (int i = 0; i < NUM_CORNERS; ++i) {
+            if (corner->quads((CornerIndex)i) != nullptr && corner->quads((CornerIndex)(Utils::pmod(i-1, (int)NUM_COORDS))) == nullptr && corner->quads((CornerIndex)((i + 1) % NUM_CORNERS)) == nullptr) {
+                // There is a bowtie at this corner
+                QuadPtr q1 = corner->quads((CornerIndex)i); 
+                QuadPtr q2 = corner->quads((CornerIndex)((i + 2) % NUM_COORDS)); 
+
+                // Check on which side the quad should be added (if q1 and q2 share a stroke)
+                bool sharedStroke = checkQuadsShareStroke(keyframe, q1, q2, newQuads);
+
+                // Otherwise just use an arbitrary side
+                if (!sharedStroke) {
+                    std::array<int, 4> adjQuads;
+                    adjacentQuads(corner, adjQuads);
+                    for (int i = 0; i < 4; ++i) {
+                        if (!contains(adjQuads[i])) {
+                            bool isNewQuad = false;
+                            int x, y;
+                            keyToCoord(adjQuads[i], x, y);
+                            QuadPtr newQuad = addQuad(adjQuads[i], x, y, isNewQuad);
+                            newQuad->setPivot(true);
+                            newQuads.push_back(newQuad);
+                            break;
+                        }
+                    }
+                }
+
+                if (newQuads.size() == nbNewQuads) continue;
+                nbNewQuads = newQuads.size();
+
+                // Propagate deformation to the new quad. Since we only deal with the bowtie case, new quads have 3 corners that already have a defined deformation.
+                QuadPtr newQuad = newQuads.back();
+                int index, newCornerIndex;
+                for (index = 0; index < NUM_CORNERS; ++index) {
+                    if (newQuad->corners[index]->getKey() == corner->getKey()) break;
+                }
+                newCornerIndex = (index + 2) % NUM_CORNERS;
+                newQuad->corners[newCornerIndex]->coord(REF_POS) = newQuad->corners[(index + 1) % NUM_CORNERS]->coord(REF_POS) + newQuad->corners[Utils::pmod(index - 1, (int)NUM_CORNERS)]->coord(REF_POS) - newQuad->corners[index]->coord(REF_POS);
+                newQuad->corners[newCornerIndex]->coord(TARGET_POS) = newQuad->corners[(index + 1) % NUM_CORNERS]->coord(TARGET_POS) + newQuad->corners[Utils::pmod(index - 1, (int)NUM_CORNERS)]->coord(TARGET_POS) - newQuad->corners[index]->coord(TARGET_POS);
+                newQuad->corners[newCornerIndex]->coord(INTERP_POS) = newQuad->corners[newCornerIndex]->coord(TARGET_POS);
+                newQuad->corners[newCornerIndex]->coord(DEFORM_POS) = newQuad->corners[newCornerIndex]->coord(TARGET_POS);
+                break;
+            }
+        }
+    }
+}
+
+void Lattice::enforceManifoldness(Stroke *stroke, Interval &interval, std::vector<QuadPtr> &newQuads, bool forceAddPivots) {
+    Point::VectorType pos, prevPos = stroke->points()[interval.from()]->pos();
+    bool newQuad = false;
+    QuadPtr quad;
+    int quadKey;
+
+    // Go through each point in the stroke between fromIdx and toIdx, if a point is not in a quad try to add it
+    int nbCols = m_nbCols;
+    for (size_t i = interval.from() + 1; i <= interval.to(); ++i) {
+        pos = stroke->points()[i]->pos();
+        if (checkPotentialBowtie(prevPos, pos, quadKey)) {
+            int x, y;
+            keyToCoord(quadKey, x, y);
+            quad = addQuad(quadKey, x, y, newQuad);
+            if (newQuad || forceAddPivots) {
+                newQuads.push_back(quad);
+                quad->setPivot(true);
+            }
+            newQuad = false;
+        }
+        prevPos = pos;
+    }
+}
+
 void Lattice::debug(std::ostream &os) const {
     for (Corner *corner : m_corners) {
         os << "REF(" << corner->coord(REF_POS).transpose() << ")  |   DEFORM(" << corner->coord(DEFORM_POS).transpose() << ")  | INTERP" << corner->coord(INTERP_POS).transpose()
            << ")  | TARGET(" << corner->coord(TARGET_POS).transpose() << ")" << std::endl;
     }
     os << "#corners=" << m_corners.size() << std::endl;
-    os << "#quads=" << m_hashTable.size() << std::endl;
+    os << "#quads=" << m_quads.size() << std::endl;
 }
 
+/**
+ * Used for retrocompatibility with old files.
+ * Restore the correct quad keys.
+ */
 void Lattice::restoreKeysRetrocomp(Group *group, Editor *editor) {
     QHash<int, int> keysMap;
 
@@ -1116,15 +1910,13 @@ void Lattice::restoreKeysRetrocomp(Group *group, Editor *editor) {
         }
     };
 
-    qDebug() << "restoreKeysRetrocomp";
-
     m_oGrid = Eigen::Vector2i(editor->tabletCanvas()->canvasRect().x(), editor->tabletCanvas()->canvasRect().y());
     m_nbCols = std::ceil((float)editor->tabletCanvas()->canvasRect().width() / m_cellSize);
     m_nbRows = std::ceil((float)editor->tabletCanvas()->canvasRect().height() / m_cellSize);
 
     // update the non-breakdown group
-    QHash<int, QuadPtr> oldHash = m_hashTable;
-    m_hashTable.clear();
+    QHash<int, QuadPtr> oldHash = m_quads;
+    m_quads.clear();
     for (QuadPtr q : oldHash) {
         Point::VectorType refCentroid = Point::VectorType::Zero();
         for (int i = 0; i < 4; ++i) refCentroid += q->corners[i]->coord(REF_POS);
@@ -1133,7 +1925,7 @@ void Lattice::restoreKeysRetrocomp(Group *group, Editor *editor) {
         int newKey = posToKey(refCentroid);
         keysMap.insert(oldKey, newKey);
         q->setKey(newKey);
-        m_hashTable.insert(newKey, q);
+        m_quads.insert(newKey, q);
     }
     group->uvs().clear();
 
@@ -1151,11 +1943,11 @@ void Lattice::restoreKeysRetrocomp(Group *group, Editor *editor) {
         curGroup->lattice()->m_nbCols = std::ceil((float)editor->tabletCanvas()->canvasRect().width() / curGroup->lattice()->m_cellSize);
         curGroup->lattice()->m_nbRows = std::ceil((float)editor->tabletCanvas()->canvasRect().height() / curGroup->lattice()->m_cellSize);
 
-        oldHash = curGroup->lattice()->m_hashTable;
-        curGroup->lattice()->m_hashTable.clear();
-        for (QuadPtr q : curGroup->lattice()->hash()) {
+        oldHash = curGroup->lattice()->m_quads;
+        curGroup->lattice()->m_quads.clear();
+        for (QuadPtr q : curGroup->lattice()->quads()) {
             q->setKey(keysMap.value(q->key()));
-            curGroup->lattice()->m_hashTable.insert(keysMap.value(q->key()), q);
+            curGroup->lattice()->m_quads.insert(keysMap.value(q->key()), q);
         }
         curGroup->uvs().clear();
         for (auto it = curGroup->strokes().begin(); it != curGroup->strokes().end(); ++it) {

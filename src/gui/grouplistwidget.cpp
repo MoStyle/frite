@@ -1,12 +1,8 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "grouplistwidget.h"
 #include "grouplist.h"
 #include "groupinfowidget.h"
+#include "editor.h"
+#include "playbackmanager.h"
 
 #include <QVBoxLayout>
 
@@ -21,13 +17,32 @@ GroupListWidget::GroupListWidget(Editor *editor, QWidget *parent) : QWidget(pare
 
 void GroupListWidget::updateAll(const GroupList& groupList) {
     clearAll();
-    m_headerLabel->setText(groupList.type() == POST ? "Post groups" : "Pre groups");
     int idx = 1;
-    for (Group *group : groupList) {
-        QWidget *groupInfo = new GroupInfoWidget(m_editor, group, this);
-        m_groupWidgets.insert(group->id(), groupInfo);
-        m_layout->insertWidget(idx, groupInfo, Qt::AlignTop | Qt::AlignLeft);
-        idx++;
+
+    VectorKeyFrame *keyframe = groupList.parentKeyframe();
+    double alpha = m_editor->alpha(m_editor->playback()->currentFrame(), keyframe->parentLayer());
+
+    if (groupList.type() == POST) {
+        m_headerLabel->setText("Post groups");
+
+        for (int i = 0; i < keyframe->orderPartials().lastPartialAt(alpha).groupOrder().order().size(); ++i) {
+            const auto &depth = keyframe->orderPartials().lastPartialAt(alpha).groupOrder().order().at(i);
+            for (int groupId : depth) {
+                Group *group = groupList.fromId(groupId);
+                QWidget *groupInfo = new GroupInfoWidget(m_editor, group, this);
+                m_groupWidgets.insert(group->id(), groupInfo);
+                m_layout->insertWidget(idx, groupInfo, Qt::AlignTop | Qt::AlignLeft);
+                idx++;
+            }
+        }
+    } else {
+        m_headerLabel->setText("Pre groups");
+        for (Group *group : groupList) {
+            QWidget *groupInfo = new GroupInfoWidget(m_editor, group, this);
+            m_groupWidgets.insert(group->id(), groupInfo);
+            m_layout->insertWidget(idx, groupInfo, Qt::AlignTop | Qt::AlignLeft);
+            idx++;
+        }
     }
 }
 

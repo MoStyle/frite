@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "groupinfowidget.h"
 #include "editor.h"
 #include "group.h"
@@ -36,8 +30,10 @@ void GroupInfoWidget::paintEvent(QPaintEvent* event) {
         painter.drawRect(0, 0, width(), CELL_HEIGHT-1);
     }
 
+    QString cc = (m_group->lattice() == nullptr || !m_group->lattice()->isSingleConnectedComponent()) ? " | /!\\" : "";
+
     painter.setPen(QGuiApplication::palette().color(QPalette::ButtonText));
-    painter.drawText(QPoint(5, 16), m_name + " | " + tr("Strokes: ") + QString::number(m_group->size()));
+    painter.drawText(QPoint(5, 16), m_name + " | " + tr("Strokes: ") + QString::number(m_group->size()) + cc);
     painter.setPen(QGuiApplication::palette().color(QPalette::Mid));
     painter.drawLine(0, 0, width(), 0);
     painter.drawLine(0, CELL_HEIGHT-1, width(), CELL_HEIGHT-1);

@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "drawendkeyframetool.h"
 
 #include "editor.h"
@@ -32,10 +26,6 @@ DrawEndKeyframeTool::~DrawEndKeyframeTool() {
 
 Tool::ToolType DrawEndKeyframeTool::toolType() const {
     return Tool::DrawEndKeyframe;
-}
-
-QGraphicsItem *DrawEndKeyframeTool::graphicsItem() {
-    return nullptr;
 }
 
 QCursor DrawEndKeyframeTool::makeCursor(float scaling) const {

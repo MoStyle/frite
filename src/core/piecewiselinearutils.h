@@ -1,11 +1,22 @@
-/*
- * SPDX-FileCopyrightText: 2010 Ilya Baran (baran37@gmail.com)
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
+/*--
+    PiecewiseLinearUtils.h  
+
+    This file is part of the Cornucopia curve sketching library.
+    Copyright (C) 2010 Ilya Baran (baran37@gmail.com)
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
 
 #ifndef CORNUCOPIA_PIECEWISELINEARUTILS_H_INCLUDED
 #define CORNUCOPIA_PIECEWISELINEARUTILS_H_INCLUDED

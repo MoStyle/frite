@@ -1,13 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2012-2014 Matthew Chiawen Chang
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
-
 #include <QtWidgets>
 
 #include "editor.h"
@@ -17,16 +7,17 @@
 #include "timelinecells.h"
 #include "vectorkeyframe.h"
 #include "gridmanager.h"
+#include "playbackmanager.h"
 
 int Layer::m_staticIdx = 0;
 
 class GridManager;
 
-Layer::Layer(QObject *parent, Editor *editor)
-    : QObject(parent),
-      m_name("Layer"),
+Layer::Layer(Editor *editor)
+    : m_name("Layer"),
       m_visible(true),
       m_showOnion(false),
+      m_hasMask(false),
       m_opacity(1.0),
       m_frameClicked(-1),
       m_selectedFrame(-1),
@@ -50,7 +41,9 @@ bool Layer::load(QDomElement &element, const QString &path) {
         m_id = id;
     }
     m_name = element.attribute("name", "Layer");
-    m_visible = (element.attribute("visibility", "1").toInt() == 1);
+    m_visible = (bool)element.attribute("visibility", "1").toInt();
+    m_showOnion = (bool)element.attribute("onion", "0").toInt();
+    m_hasMask = (bool)element.attribute("mask", "0").toInt();
     m_opacity = element.attribute("opacity", "1.0").toDouble();
 
     qDeleteAll(m_keyFrames.values());
@@ -64,8 +57,12 @@ bool Layer::load(QDomElement &element, const QString &path) {
         if (!keyElement.isNull()) {
             if (keyElement.tagName() == "vectorkeyframe") {
                 int frame = keyElement.attribute("frame").toInt();
+                qDebug() << "LOADING FRAME " << frame;
                 VectorKeyFrame *keyFrame = new VectorKeyFrame(this);
                 keyFrame->load(keyElement, path, m_editor);                
+                // if (frame == 20) {
+
+                // }
                 if (m_keyFrames.contains(frame)) {
                     delete m_keyFrames[frame];
                 }
@@ -75,29 +72,48 @@ bool Layer::load(QDomElement &element, const QString &path) {
         keyTag = keyTag.nextSibling();
     }
 
-    // set next/prev trajectories pointers
     for (VectorKeyFrame *key : m_keyFrames) {
         VectorKeyFrame *next = key->nextKeyframe();
         VectorKeyFrame *prev = key->prevKeyframe();
+
+        for (Group *group : key->postGroups()) {
+            // Restore grid-stroke correspondence (backward strokes)
+            Group *nextPre = group->nextPreGroup();
+            if (nextPre != nullptr) {
+                for (auto it = nextPre->strokes().constBegin(); it != nextPre->strokes().constEnd(); ++it) {
+                    Stroke *stroke = next->stroke(it.key());
+                    m_editor->grid()->bakeStrokeInGrid(group->lattice(), stroke, 0, stroke->size() - 1, TARGET_POS, false);
+                }
+            }
+
+            // Retrocomp
+            if (group->lattice() != nullptr && group->lattice()->origin() == Eigen::Vector2i::Zero()) {
+                group->lattice()->restoreKeysRetrocomp(group, m_editor);
+                group->lattice()->isConnected();
+            }
+        }
+
+        // Set next/prev trajectories pointers
         for (const std::shared_ptr<Trajectory> &traj : key->trajectories()) {
             if (traj->nextTrajectoryID() >= 0)
                 traj->setNextTrajectory(next->trajectories().value(traj->nextTrajectoryID(), nullptr));
             if (traj->prevTrajectoryID() >= 0)
                 traj->setPrevTrajectory(prev->trajectories().value(traj->prevTrajectoryID(), nullptr));
         }
-    }
-
-    // retrocomp lattices
-    for (VectorKeyFrame *keyframe : m_keyFrames) {
-        for (Group *group : keyframe->postGroups()) {
-            if (group->lattice() != nullptr && group->lattice()->origin() == Eigen::Vector2i::Zero()) {
-                group->lattice()->restoreKeysRetrocomp(group, m_editor);
-                group->lattice()->isConnected();
-            }
-        }
+        
+        // Check spacing
+        key->updateCurves();
     }
 
     qDebug() << "Loaded " << m_keyFrames.size() << " keyframes";
+
+    QDomElement compositeElt = element.firstChildElement("compositebezier");
+    m_pivotCurves.load(compositeElt);
+    for (int frame : m_keyFrames.keys()){
+        float t = getFrameTValue(frame);
+        m_keyFrames[frame]->setPivotCurve(m_pivotCurves.getBezier(t));
+    }
+
 
     return true;
 }
@@ -107,11 +123,14 @@ bool Layer::save(QDomDocument &doc, QDomElement &root, const QString &path) cons
     layerElt.setAttribute("id", m_id);
     layerElt.setAttribute("name", m_name);
     layerElt.setAttribute("visibility", m_visible);
+    layerElt.setAttribute("onion", m_showOnion);
+    layerElt.setAttribute("mask", m_hasMask);
     layerElt.setAttribute("opacity", m_opacity);
 
     for (keyframe_iterator it = m_keyFrames.begin(); it != m_keyFrames.end(); ++it) {
         it.value()->save(doc, layerElt, path, m_id, it.key());
     }
+    m_pivotCurves.save(doc, layerElt);
 
     root.appendChild(layerElt);
     return true;
@@ -140,6 +159,15 @@ void Layer::paintLabel(QPainter &painter, int x, int y, int width, int height, b
     painter.drawEllipse(x + 23, y + 4, 9, 9);
     painter.setRenderHint(QPainter::Antialiasing, false);
 
+    // has mask
+    if (m_hasMask)
+        painter.setBrush(QGuiApplication::palette().color(QPalette::Midlight));
+    else
+        painter.setBrush(Qt::NoBrush);
+    painter.setPen(QGuiApplication::palette().color(QPalette::WindowText));
+    painter.drawEllipse(x + 40, y + 4, 9, 9);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+
     // opacity
     painter.setBrush(QGuiApplication::palette().color(QPalette::Midlight));
     painter.drawRect(150, y + 2, 35, height - 6);
@@ -154,7 +182,7 @@ void Layer::paintLabel(QPainter &painter, int x, int y, int width, int height, b
     f.setPointSize(height / 2);
     painter.setFont(f);
     painter.setPen(QGuiApplication::palette().color(QPalette::ButtonText));
-    painter.drawText(QPoint(x + 40, y + (2 * height) / 3), m_name);
+    painter.drawText(QPoint(x + 57, y + (2 * height) / 3), m_name);
 }
 
 void Layer::paintSelection(QPainter &painter, int x, int y, int width, int height) {
@@ -216,8 +244,12 @@ void Layer::paintKeys(QPainter &painter, TimeLineCells *cells, int y, bool selec
             painter.setPen(QPen(QBrush(QColor(40, 40, 40)), 1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
             if (!selected)
                 painter.setBrush(Qt::NoBrush);
-            else
-                painter.setBrush(QGuiApplication::palette().color(QPalette::Midlight));
+            else{
+                QPalette::ColorRole color = QPalette::Midlight;
+                if (m_selectedKeyFrames.contains(getVectorKeyFrameAtFrame(keyFrameIndices[i])) || cells->selectionContainsVectorKeyFrame(keyFrameIndices[i]))
+                    color = QPalette::Highlight;
+                painter.setBrush(QGuiApplication::palette().color(color));
+            }
 
             int currentFrame = keyFrameIndices[i];
             int length = 1;
@@ -226,7 +258,10 @@ void Layer::paintKeys(QPainter &painter, TimeLineCells *cells, int y, bool selec
             painter.drawRect(cells->getFrameX(currentFrame) - cells->getFrameSize(), y + 1, length * cells->getFrameSize(),
                              cells->getLayerHeight() - 4);
 
-            if (m_keyFrames[keyFrameIndices[i]]->isTopSelected()) painter.setBrush(QGuiApplication::palette().color(QPalette::Dark));
+            if (m_keyFrames[keyFrameIndices[i]]->isTopSelected()) 
+                painter.setBrush(QGuiApplication::palette().color(QPalette::Dark));
+            else 
+                painter.setBrush(QGuiApplication::palette().color(QPalette::Midlight));
             painter.drawRect(topRect(cells, currentFrame, y));
 
             if (m_keyFrames[keyFrameIndices[i]]->isBottomSelected())
@@ -292,6 +327,7 @@ void Layer::startMoveKeyframe(TimeLineCells *cells, QMouseEvent *event, int fram
     m_keyFrames[m_selectedFrame]->setTopSelected(false);
     m_keyFrames[m_selectedFrame]->setBottomSelected(false);
     m_selectedFrame = -1;
+
 }
 
 void Layer::moveKeyframe(QMouseEvent *event, int frameNumber) {
@@ -303,11 +339,8 @@ void Layer::moveKeyframe(QMouseEvent *event, int frameNumber) {
             int next = getNextKeyFramePosition(m_selectedFrame);
             int moveTo = std::min(std::max(prev + 1, frameNumber), next - 1);
             if (moveTo != m_selectedFrame) {
-                m_keyFrames.remove(m_selectedFrame);
-                m_keyFrames[moveTo] = keyFrame;
+                moveKeyFrame(m_selectedFrame, moveTo);
                 m_selectedFrame = moveTo;
-                VectorKeyFrame *prev = getPrevKey(m_selectedFrame);
-                if (prev) prev->updateCurves();                
             }
         } else if (keyFrame->isBottomSelected() && frameNumber >= m_selectedFrame) {
             // move following keyframes
@@ -331,7 +364,7 @@ void Layer::moveKeyframe(QMouseEvent *event, int frameNumber) {
             m_frameClicked = frameNumber;
         }
         m_editor->timelineUpdate(m_selectedFrame);
-        keyFrame->updateCurves();
+        // keyFrame->updateCurves();
     }
     m_editor->tabletCanvas()->update();
 }
@@ -518,7 +551,7 @@ int Layer::stride(int frame) {
 
 int Layer::inbetweenPosition(int frame) {
     int prev = getLastKeyFramePosition(frame);
-    return frame - prev;
+    return std::min(frame, getMaxKeyFramePosition()) - prev;
 }
 
 void Layer::insertKeyFrame(int frame, VectorKeyFrame *keyframe) {
@@ -528,9 +561,18 @@ void Layer::insertKeyFrame(int frame, VectorKeyFrame *keyframe) {
     m_keyFrames[frame] = keyframe;
 }
 
+void Layer::removeKeyFrameWithoutDisplacement(int frame) {
+    auto it = m_keyFrames.find(frame);
+    if (it != m_keyFrames.end()){
+        delete m_keyFrames[frame];
+    }
+}
+
 void Layer::removeKeyFrame(int frame) {
     auto it = m_keyFrames.find(frame);
     if (it != m_keyFrames.end()) {
+        removeSelectedKeyFrame(m_keyFrames[frame]);
+        deletePointFromPivotCurve(frame);
         delete m_keyFrames[frame];
         it++;
         int next_key = it.key();
@@ -544,6 +586,217 @@ void Layer::removeKeyFrame(int frame) {
 
 void Layer::moveKeyFrame(int oldFrame, int newFrame) {
     VectorKeyFrame *keyframe = m_keyFrames[oldFrame];
+    VectorKeyFrame *prev = getLastVectorKeyFrameAtFrame(m_editor->playback()->currentFrame(), 0);
+    int maxKeyFrameBefore = getMaxKeyFramePosition();
     m_keyFrames.remove(oldFrame);
     m_keyFrames[newFrame] = keyframe;
+    int maxKeyFrameAfter = getMaxKeyFramePosition();
+    if (maxKeyFrameBefore != maxKeyFrameAfter){
+        for (int frame : m_keyFrames.keys()){
+            float tSrc = frame < maxKeyFrameBefore ? float(frame - 1) / (maxKeyFrameBefore - 1) : 1.f;
+            float tDst = frame < maxKeyFrameAfter ? float(frame - 1) / (maxKeyFrameAfter - 1) : 1.f;
+            m_pivotCurves.moveControlPoint(tSrc, tDst);
+        }
+    }
+    else{
+        float tSrc = oldFrame < maxKeyFrameBefore ? float(oldFrame - 1) / (maxKeyFrameBefore - 1) : 1.f;
+        float tDst = newFrame < maxKeyFrameAfter ? float(newFrame - 1) / (maxKeyFrameAfter - 1) : 1.f;
+        m_pivotCurves.moveControlPoint(tSrc, tDst);
+    }
+    keyframe->updateCurves();
+    if (keyframe->prevKeyframe() != nullptr) {
+        keyframe->prevKeyframe()->updateCurves();
+    }
+    if (prev != getLastVectorKeyFrameAtFrame(m_editor->playback()->currentFrame(), 0)) emit m_editor->currentKeyFrameChanged();
+}
+
+void Layer::addSelectedKeyFrame(int frame){
+    if (getMaxKeyFramePosition() <= frame)
+        return;
+
+    int keyFrame;
+    if (keyExists(frame))
+        keyFrame = frame;
+    else
+        keyFrame = getPreviousKeyFramePosition(frame);
+
+    VectorKeyFrame * vector = getVectorKeyFrameAtFrame(keyFrame);
+    if (!m_selectedKeyFrames.contains(vector))
+        m_selectedKeyFrames.push_back(vector);
+
+}
+
+void Layer::removeSelectedKeyFrame(VectorKeyFrame * keyFrame){
+    m_selectedKeyFrames.removeOne(keyFrame);
+}
+
+void Layer::sortSelectedKeyFrames(){
+    std::sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), [&](VectorKeyFrame * v1, VectorKeyFrame * v2){
+        return getVectorKeyFramePosition(v1) < getVectorKeyFramePosition(v2);
+    });
+}
+
+void Layer::clearSelectedKeyFrame(){
+    m_selectedKeyFrames.clear();
+}
+
+bool Layer::selectedKeyFrameIsEmpty(){
+    return m_selectedKeyFrames.isEmpty();
+}
+
+bool Layer::isVectorKeyFrameSelected(VectorKeyFrame * keyFrame){
+    return m_selectedKeyFrames.contains(keyFrame);
+}
+
+int Layer::getFirstKeyFrameSelected(){
+    int min = getMaxKeyFramePosition();
+    for (int i = 0; i < m_selectedKeyFrames.size(); ++i){
+        int testedFrame = getVectorKeyFramePosition(m_selectedKeyFrames[i]);
+        min = testedFrame < min ? testedFrame : min;
+    }
+    return min;
+}
+
+int Layer::getLastKeyFrameSelected(){
+    int max = 1;
+    for (int i = 0; i < m_selectedKeyFrames.size(); ++i){
+        int testedFrame = getVectorKeyFramePosition(m_selectedKeyFrames[i]);
+        max = testedFrame > max ? testedFrame : max;
+    }
+    return max;
+}
+
+void Layer::insertSelectedKeyFrame(int layerNumber, int newFrame, int n){
+    if (m_selectedKeyFrames.isEmpty()) return;
+
+    int offset = 0;
+    std::for_each(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), [&](VectorKeyFrame * keyFrame){
+        int frame = getVectorKeyFramePosition(keyFrame);
+        offset += stride(frame);
+    });
+
+    m_editor->undoStack()->beginMacro("Paste keyFrames");
+    for (int i = 0; i < n; ++i){
+        m_editor->undoStack()->push(new PasteKeysCommand(m_editor, layerNumber, newFrame + i * offset, i + 1.));
+    }
+    m_editor->undoStack()->endMacro();
+    return;
+}
+
+QVector<VectorKeyFrame *> Layer::getSelectedKeyFramesWithDefault() {
+    QVector<VectorKeyFrame * > keys = m_selectedKeyFrames;
+    int frame = getPreviousKeyFramePosition(getMaxKeyFramePosition());
+    VectorKeyFrame * previousLast = getVectorKeyFrameAtFrame(frame);
+    if (isVectorKeyFrameSelected(previousLast))
+        keys.append(std::prev(keysEnd(), 1).value());
+    return keys;
+}
+
+bool Layer::isSelectionTranslationExtracted(){
+    for (VectorKeyFrame * key : m_selectedKeyFrames){
+        if (!key->isTranslationExtracted())
+            return false;
+    }  
+    return true;
+}
+
+bool Layer::isSelectionRotationExtracted(){
+    for (VectorKeyFrame * key : m_selectedKeyFrames){
+        if (!key->isRotationExtracted())
+            return false;
+    }  
+    return true;
+}
+
+
+void Layer::addPointToPivotCurve(int frame, Point::VectorType point){
+    if (!keyExists(frame)) return;
+    float t = getFrameTValue(frame);
+    m_pivotCurves.addControlPoint(t, point);
+    if (frame < getMaxKeyFramePosition())
+        getVectorKeyFrameAtFrame(frame)->updateTransforms();
+    if (frame > 1)
+        getPrevKey(frame)->updateTransforms();
+}
+
+void Layer::translatePivot(int frame, Point::VectorType translation){
+    if (!keyExists(frame)) return;
+    float t = getFrameTValue(frame);
+    m_pivotCurves.translateControlPoint(t, translation);
+    if (frame < getMaxKeyFramePosition())
+        getVectorKeyFrameAtFrame(frame)->updateTransforms(translation, Point::VectorType::Zero());
+    if (frame > 1)
+        getPrevKey(frame)->updateTransforms(Point::VectorType::Zero(), translation);
+}
+
+Point::VectorType Layer::getPivotPosition(int frame){
+    float t = getFrameTValue(frame);
+    return m_pivotCurves.evalArcLength(t);
+}
+
+Point::VectorType Layer::getPivotControlPoint(int frame){
+    float t = getFrameTValue(frame);
+    if (m_pivotCurves.hasControlPoint(t) && keyExists(frame))
+        return m_pivotCurves.evalArcLength(t);
+    return Point::VectorType(NAN, NAN);
+}
+
+void Layer::deletePointFromPivotCurve(int frame){
+    if (!keyExists(frame)) return;
+    float t = getFrameTValue(frame);
+    m_pivotCurves.deleteControlPoint(t);
+    getVectorKeyFrameAtFrame(frame)->updateTransforms();
+    getPrevKey(frame)->updateTransforms();
+    getNextKey(frame)->updateTransforms();
+}
+
+
+void Layer::addVectorKeyFrameTranslation(int frame, Point::VectorType translationToAdd, bool updatePreviousPivot){
+    float t = getFrameTValue(frame);
+    m_pivotCurves.translateControlPoint(t, translationToAdd);
+    getVectorKeyFrameAtFrame(frame)->updateTransforms();
+    getPrevKey(frame)->updateTransforms();
+}
+
+void Layer::extractPivotTranslation(QVector<VectorKeyFrame *> keyFrames){
+    // invert Translation from REF_POS to TARGET_POS
+    for (VectorKeyFrame * key : keyFrames){
+        key->extractPivotTranslation();
+    }
+}
+
+void Layer::insertPivotTranslation(QVector<VectorKeyFrame *> keyFrames){
+    for (VectorKeyFrame * key : keyFrames){
+        key->insertPivotTranslation();
+    }
+}
+
+void Layer::getMatchingRotation(QVector<VectorKeyFrame *> keyFrames, QVector<float> &angles){
+    float angle = 0.0;
+    angles.clear();
+    angles.append(angle);
+    for (VectorKeyFrame * key : keyFrames){
+        if (key != std::prev(keysEnd(), 1).value())
+            angle += key->optimalRotationAngle(key->getCenterOfGravity(REF_POS), REF_POS, key->getCenterOfGravity(TARGET_POS), TARGET_POS);
+        angles.append(angle);
+    }
+}
+
+void Layer::extractPivotRotation(QVector<VectorKeyFrame *> keyFrames, QVector<float> &angles){
+    VectorKeyFrame * prevKey = nullptr;
+    int cpt = 0;
+    for (VectorKeyFrame * key : keyFrames){
+        if (key == std::prev(keysEnd(), 1).value())
+            key->extractPivotRotation(angles[cpt], angles[cpt]);
+        else{
+            key->extractPivotRotation(angles[cpt], angles[cpt + 1]);
+            cpt++;
+        }
+    }
+}
+
+void Layer::insertPivotRotation(QVector<VectorKeyFrame *> keyFrames){
+    for (VectorKeyFrame * key : keyFrames){
+        key->insertPivotRotation();
+    }
 }

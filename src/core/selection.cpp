@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "selection.h"
 
 #include "vectorkeyframe.h"
@@ -13,17 +7,17 @@ Selection::Selection(VectorKeyFrame *keyframe) : m_keyframe(keyframe) {
 }
 
 void Selection::addGroup(Group *group, unsigned int groupType) {
-    QHash<int, Group *> &selectedGroups = groupType == POST ? m_selectedPostGroups : m_selectedPreGroups;
+    QMap<int, Group *> &selectedGroups = groupType == POST ? m_selectedPostGroups : m_selectedPreGroups;
     selectedGroups.insert(group->id(), group);
 }
 
-void Selection::addGroups(const QHash<int, Group *> &groups, unsigned int groupType) {
-    QHash<int, Group *> &selectedGroups = groupType == POST ? m_selectedPostGroups : m_selectedPreGroups;
+void Selection::addGroups(const QMap<int, Group *> &groups, unsigned int groupType) {
+    QMap<int, Group *> &selectedGroups = groupType == POST ? m_selectedPostGroups : m_selectedPreGroups;
     selectedGroups.insert(groups);
 }
 
-void Selection::setGroup(const QHash<int, Group *> &groups, unsigned int groupType) {
-    QHash<int, Group *> &selectedGroups = groupType == POST ? m_selectedPostGroups : m_selectedPreGroups;
+void Selection::setGroup(const QMap<int, Group *> &groups, unsigned int groupType) {
+    QMap<int, Group *> &selectedGroups = groupType == POST ? m_selectedPostGroups : m_selectedPreGroups;
     selectedGroups = groups;
     if (groupType == POST) m_selectedPreGroups.clear();
     else if (groupType == PRE) m_selectedPostGroups.clear();

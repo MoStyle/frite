@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "moveframestool.h"
 
 #include "group.h"
@@ -21,8 +15,7 @@
 
 static dkBool k_relative("Debug->MoveFrames->Relative", true);
 
-MoveFramesTool::MoveFramesTool(QObject* parent, Editor* editor) : SpacingTool(parent, editor) {
-    m_spacingTool = true;
+MoveFramesTool::MoveFramesTool(QObject* parent, Editor* editor) : ChartTool(parent, editor) {
     m_toolTips = QString("Left-click: move a single frame | Ctrl+Left-click: expand/contract frames | Shift+Left-click: move all frames");
 }
 
@@ -31,8 +24,6 @@ MoveFramesTool::~MoveFramesTool() {
 }
 
 Tool::ToolType MoveFramesTool::toolType() const { return Tool::MoveFrames; }
-
-QGraphicsItem* MoveFramesTool::graphicsItem() { return nullptr; }
 
 QCursor MoveFramesTool::makeCursor(float scaling) const { return QCursor(Qt::ArrowCursor); }
 
@@ -58,9 +49,22 @@ void MoveFramesTool::tickMoved(QGraphicsSceneMouseEvent *event, ChartTickItem *t
     int idx = tick->idx();
 
     if (event->modifiers() & Qt::ControlModifier) {     // ease-in/ease-out (dilate/contract ticks around the mouse position)
-        for (int i = 0; i < chart->nbTicks(); ++i) {
-            if (!chart->controlTickAt(i)->fixed() && i != idx) {
-                chart->controlTickAt(i)->move(i > idx ? deltaX : -deltaX);
+        if (idx > 0 && !chart->controlTickAt(idx - 1)->fixed()) {
+            chart->controlTickAt(idx - 1)->move(-deltaX);
+            for (int i = 1; i < tick->idx() - 1; ++i) {  
+                if (!chart->controlTickAt(i)->fixed()) {
+                    float newOffset = m_offsetLeft[i - 1] * (1.0 / m_offsetLeft[idx - 2]);
+                    chart->controlTickAt(i)->setXVal(chart->controlTickAt(idx - 1)->xVal() * newOffset);
+                }
+            }
+        }
+        if (idx < chart->nbTicks() - 2 && !chart->controlTickAt(idx + 1)->fixed()) {
+            chart->controlTickAt(idx + 1)->move(deltaX);
+            for (int i = tick->idx() + 2; i < chart->nbTicks() - 1; ++i) {  
+                if (!chart->controlTickAt(i)->fixed()) {
+                    float newOffset = (1.0 - m_offsetLeft[i - tick->idx() - 1]) * (1.0 / (1.0 - m_offsetLeft[0]));
+                    chart->controlTickAt(i)->setXVal(std::min((1.0 - chart->controlTickAt(idx + 1)->xVal()) * m_offsetRight[i - tick->idx() - 1] + chart->controlTickAt(idx + 1)->xVal(), 1.0));
+                }
             }
         }
         chart->updateSpacing(1, true);

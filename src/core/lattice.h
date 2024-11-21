@@ -1,16 +1,13 @@
-/*
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef LATTICE_H
 #define LATTICE_H
 
 #include <QHash>
 #include <QTransform>
 #include <QVector>
+#include <QOpenGLBuffer>
+#include <QOpenGLVertexArrayObject>
+#include <QOpenGLShaderProgram>
+#include <QOpenGLExtraFunctions>
 #include <iostream>
 #include <set>
 
@@ -22,17 +19,20 @@
 #include "layer.h"
 #include "point.h"
 #include "quad.h"
+#include "logarithmicspiral.h"
 
 class VectorKeyFrame;
 class Group;
 class Stroke;
 class UVHash;
+class Mask;
 
 using namespace Eigen;
 class Lattice {
    public:
     Lattice(VectorKeyFrame *keyframe);
     Lattice(const Lattice &other);
+    Lattice(const Lattice &other, const std::vector<int> &quads);
 
     void init(int cellsize, int nbCols, int nbRows, Eigen::Vector2i origin = Eigen::Vector2i::Zero());
     void save(QDomDocument &doc, QDomElement &latticeElt) const;
@@ -52,27 +52,32 @@ class Lattice {
     void setKeyframe(VectorKeyFrame *keyframe) { m_keyframe = keyframe; }
     int getMaxCornerKey() { return m_maxCornerKey; }
     void setMaxCornerKey(int k) { m_maxCornerKey = k; }
-    int maxQuadKey() { return m_nbCols * m_nbRows - 1; };
+    double scale() const { return m_scale; }
+    void setScale(double scale) { m_scale = scale; }
+    Point::Affine scaling() const { return m_scaling; }
+    void setScaling(Point::Affine scaling) { m_scaling = scaling; }
 
     // Flags
     inline bool isArapPrecomputeDirty() const { return m_precomputeDirty; }
     inline bool isArapInterpDirty() const { return m_arapDirty; }
+    inline bool needRetrocomp() const { return m_retrocomp; }
+    inline bool isBufferCreated() const { return m_bufferCreated; }
     void setArapDirty();
     inline float currentPrecomputedTime() const { return m_currentPrecomputedTime; }
     inline void resetPrecomputedTime() { m_currentPrecomputedTime = -1; }
 
     // Quads & corners
-    inline bool contains(int key) { return m_hashTable.contains(key); }
-    inline void insert(int key, QuadPtr cell) { m_hashTable.insert(key, cell); }
-    inline int size() { return m_hashTable.size(); }
-    inline QuadPtr operator[](int key) { return m_hashTable[key]; }
-    inline QuadPtr quad(int key) { return m_hashTable.contains(key) ? m_hashTable[key] : nullptr; }
-    inline QuadPtr at(int x, int y) { return m_hashTable[coordToKey(x, y)]; }
-    const QHash<int, QuadPtr> &hash() { return m_hashTable; }
-    bool isEmpty() { return m_hashTable.empty(); }
+    inline bool contains(int key) const { return m_quads.contains(key); }
+    inline void insert(int key, QuadPtr cell) { m_quads.insert(key, cell); }
+    inline int size() const { return m_quads.size(); }
+    inline QuadPtr operator[](int key) { return m_quads[key]; }
+    inline QuadPtr quad(int key) const { return m_quads.contains(key) ? m_quads.value(key) : nullptr; }
+    inline QuadPtr at(int x, int y) { return m_quads[coordToKey(x, y)]; }
+    const QHash<int, QuadPtr> &quads() { return m_quads; }
+    bool isEmpty() { return m_quads.empty(); }
     inline Corner *find(int key) { return m_corners[key]; }
     inline QVector<Corner *> &corners() { return m_corners; }
-    inline QList<QuadPtr> quads() { return m_hashTable.values(); }
+    // inline QList<QuadPtr> quads() { return m_quads.values(); }
     inline Point::VectorType refCM() const { return m_refCM; }
 
     QuadPtr addQuad(const Point::VectorType &point, bool &isNewQuad);
@@ -80,18 +85,26 @@ class Lattice {
     QuadPtr addQuad(QuadPtr &quad);
     QuadPtr addEmptyQuad(int key);
     void deleteQuad(int key);
-    void deleteVolatileQuads();
-    void deleteEmptyVolatileQuads();
+    void deleteQuadsPredicate(std::function<bool(QuadPtr)> predicate);
     void deleteUnusedCorners();
 
     // UVs & embedding
     bool backwardUVDirty() const { return m_backwardUVDirty; }
     void setBackwardUVDirty(bool dirty) { m_backwardUVDirty = dirty; }
-    bool quadContainsPoint(QuadPtr quad, const Point::VectorType &p, PosTypeIndex cornerType);
-    bool contains(const Point::VectorType &p, PosTypeIndex cornerType, QuadPtr &quad, int &key);
+    bool quadContainsPoint(QuadPtr quad, const Point::VectorType &p, PosTypeIndex cornerType) const;
+    bool contains(const Point::VectorType &p, PosTypeIndex cornerType, QuadPtr &quad, int &key) const;
+    bool contains(Stroke *stroke, int from, int to, PosTypeIndex pos, bool checkConnectivity=false) const;
+    bool contains(VectorKeyFrame *key, const StrokeIntervals &intervals, PosTypeIndex pos, bool checkConnectivity=false) const;
+    bool intersects(Stroke *stroke, int from, int to, PosTypeIndex pos) const;
+    bool intersects(VectorKeyFrame *key, const StrokeIntervals &intervals, PosTypeIndex pos) const;
+    bool intersectedQuads(Stroke *stroke, int from, int to, PosTypeIndex pos, std::set<int> &quads) const;
+    bool tagValidPath(Stroke *stroke, int from, int to, PosTypeIndex pos, QuadFlags flag) const;
     Point::VectorType getUV(const Point::VectorType &p, PosTypeIndex type, int &quadKey);
+    Point::VectorType getUV(const Point::VectorType &p, PosTypeIndex type, QuadPtr quad);
     Point::VectorType getWarpedPoint(const Point::VectorType &p, int quadKey, const Point::VectorType &uv, PosTypeIndex type);
-    bool bakeForwardUV(const Stroke *stroke, Interval &interval, UVHash &uvs);
+    bool bakeForwardUV(const Stroke *stroke, Interval &interval, UVHash &uvs, PosTypeIndex type=REF_POS);
+    bool bakeForwardUVConnectivityCheck(const Stroke *stroke, Interval &interval, UVHash &uvs, PosTypeIndex type=REF_POS);
+    bool bakeForwardUVPrecomputed(const Stroke *stroke, Interval &interval, UVHash &uvs);
     bool bakeBackwardUV(const Stroke *stroke, Interval &interval, const Point::Affine &transform, UVHash &uvs);
 
     // Trajectory constraints
@@ -102,60 +115,90 @@ class Lattice {
 
     // Pins
     std::vector<Point::VectorType> pinsDisplacementVectors() const;
+    void displacePinsQuads(PosTypeIndex dstPos);
 
     // Drawing 
     void drawLattice(QPainter &painter, qreal interpFactor, const QColor &color, PosTypeIndex type = TARGET_POS) const;
     void drawLattice(QPainter &painter, const QColor &color, VectorKeyFrame *keyframe, int groupID, int inbetween) const;
     void drawPins(QPainter &painter);
+    void drawCornersTrajectories(QPainter &painter, const QColor &color, Group *group, VectorKeyFrame *key, bool linearInterpolation = true);
+    // Must be called with a valid OpenGL context
+    void bindVAO() { m_vao.bind(); }
+    void releaseVAO() { m_vao.release(); }
+    void createBuffer(QOpenGLShaderProgram *program, QOpenGLExtraFunctions *functions);
+    void destroyBuffer();
+    void updateBuffer();
 
     // Compute P^T and LHS of ARAP equation (with constraint)
     void precompute();
     // Compute ARAP interpolation and store it in INTERP_POS corner coord
-    void interpolateARAP(float alphaLinear, float alpha, const Point::Affine &globalRigidTransform, bool useRigidTransform = true);
+    void interpolateARAP(qreal alphaLinear, qreal alpha, const Point::Affine &globalRigidTransform, bool useRigidTransform = true);
 
     // Misc. and utils
     void applyTransform(const Point::Affine &transform, PosTypeIndex ref, PosTypeIndex dst);
-    void copyPositions(const Lattice *src, PosTypeIndex srcPos, PosTypeIndex dst);          // suppose copied lattice
-    void moveSrcPosTo(const Lattice *target, PosTypeIndex srcPos, PosTypeIndex targetPos);  // suppose copied lattice
+    void copyPositions(const Lattice *src, PosTypeIndex srcPos, PosTypeIndex dst);          // assume copied lattice
+    void moveSrcPosTo(const Lattice *target, PosTypeIndex srcPos, PosTypeIndex targetPos);  // assume copied lattice
+
     Point::VectorType centerOfGravity(PosTypeIndex type = TARGET_POS);
+
     Point::VectorType motionEnergy2D() const { return m_tgtCM - m_refCM; };
     Point::VectorType motionEnergy2D(double t) const { return (m_tgtCM * t + m_refCM * (1.0 - t)) - m_refCM; };
-    Point::Affine quadRefTransformation(int quadKey);
+
     void resetDeformation();
-    bool areQuadsConnected(int quadKeyA, int quadKeyB);
+
+    // Utils
+    Point::VectorType projectOnEdge(const Point::VectorType &p, int &outQuad) const;
+    bool areQuadsConnected(int quadKeyA, int quadKeyB) const;
+    void adjacentQuads(Corner *corner, std::array<int, 4> &neighborKeys);
+    void adjacentQuads(QuadPtr quad, std::array<int, 8> &neighborKeys);
+    QuadPtr adjacentQuad(QuadPtr quad, EdgeIndex edge);
     bool isSingleConnectedComponent() const { return m_singleConnectedComponent; }
     bool isConnected();
     void getConnectedComponents(std::vector<std::vector<int>> &outputComponents, bool overrideFlag=true);
+
+    Corner *findBoundaryCorner(PosTypeIndex coordType);
+    Corner *findNextBoundaryCorner(Corner * corner);
+    int quadsInCommon(Corner *c1, Corner *c2);
+    void markOutline();
+
+    bool checkPotentialBowtie(Point::VectorType &prevPoint, Point::VectorType &curPoint, int &quadKeyOut);
+    void enforceManifoldness(Group *group);
+    void enforceManifoldness(Stroke *stroke, Interval &interval, std::vector<QuadPtr> &newQuads, bool forceAddPivots = false);
+
     void debug(std::ostream &os) const;
     void restoreKeysRetrocomp(Group *group, Editor *editor);
 
-    inline int coordToKey(int x, int y) { return x + y * m_nbCols; }
+    inline int coordToKey(int x, int y) const { return x + y * m_nbCols; }
 
-    inline void keyToCoord(int key, int &x, int &y) { 
+    inline void keyToCoord(int key, int &x, int &y) const { 
         x = key % m_nbCols;
         y = key / m_nbCols;
     }
 
-    inline int posToKey(const Point::VectorType &p) {
+    inline int posToKey(const Point::VectorType &p) const {
         int x, y;
         posToCoord(p, x, y);
         return coordToKey(x, y);
     }
 
-    inline void posToCoord(const Point::VectorType &p, int &x, int &y) {
+    inline void posToCoord(const Point::VectorType &p, int &x, int &y) const {
         double i = double(p.x() - m_oGrid.x()) / double(m_cellSize);
         double j = double(p.y() - m_oGrid.y()) / double(m_cellSize);
         x = int(floor(i));
         y = int(floor(j));
     }
 
+    void setToRestTransform(Point::Affine transform) { m_toRestPos = transform; };
+    Point::Affine getToRestTransform() const { return m_toRestPos; };
+
    private:
+    bool checkQuadsShareStroke(VectorKeyFrame *keyframe, QuadPtr q1, QuadPtr q2, std::vector<QuadPtr> &newQuads);
     void computePStar(QuadPtr q, int cornerI, int cornerJ, int quadRow, bool inverseOrientation, std::vector<Eigen::Triplet<double>> &P_triplets);
     void computeQuadA(QuadPtr q, MatrixXd &At, int &i, float t, bool inverseOrientation);
     
     VectorKeyFrame *m_keyframe;
 
-    QHash<int, QuadPtr> m_hashTable;
+    QHash<int, QuadPtr> m_quads;
     QVector<Corner *> m_corners;
 
     int m_nbCols;
@@ -163,6 +206,9 @@ class Lattice {
     int m_cellSize;
     Eigen::Vector2i m_oGrid;              // TL of the canvas
     Point::VectorType m_refCM, m_tgtCM;   // center of mass of the lattice in its reference and target positions
+
+    Point::Affine m_toRestPos;
+    Point::Affine m_scaling;
 
     // Constraints indices in the keyframe list
     std::set<unsigned int> m_constraintsIdx;
@@ -178,8 +224,14 @@ class Lattice {
     bool m_arapDirty;
     bool m_backwardUVDirty;
     bool m_singleConnectedComponent;
+    bool m_retrocomp;
     float m_currentPrecomputedTime;
     int m_maxCornerKey;
+
+    // GL stuff
+    QOpenGLVertexArrayObject m_vao;
+    QOpenGLBuffer m_vbo, m_ebo;
+    bool m_bufferCreated, m_bufferDestroyed, m_bufferDirty;
 };
 
 #endif  // LATTICE_H

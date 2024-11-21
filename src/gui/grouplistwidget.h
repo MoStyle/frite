@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef __GROUPLISTWIDGET_H__
 #define __GROUPLISTWIDGET_H__
 

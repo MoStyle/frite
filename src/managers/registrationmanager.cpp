@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "registrationmanager.h"
 #include "vectorkeyframe.h"
 #include "group.h"
@@ -41,7 +35,7 @@ void RegistrationManager::preRegistration(Group *source, PosTypeIndex type) {
     sw.stop();
 }
 
-void RegistrationManager::preRegistration(const QHash<int, Group *> &groups, PosTypeIndex type) {
+void RegistrationManager::preRegistration(const QMap<int, Group *> &groups, PosTypeIndex type) {
     StopWatch sw("Pre registration");
     for (Group *group : groups) {
         group->lattice()->resetDeformation();
@@ -67,7 +61,7 @@ void RegistrationManager::registration(Group *source, PosTypeIndex type, PosType
     }
 
     if (registrationIt == 0) {
-        source->lattice()->setArapDirty();
+        source->setGridDirty();
         source->lattice()->setBackwardUVDirty(true);
         sw0.stop();
         return;
@@ -94,8 +88,18 @@ void RegistrationManager::registration(Group *source, PosTypeIndex type, PosType
     sw1.stop();
 
     // Dirty flag for ARAP interpolation (recompute prefactorized matrix)
-    source->lattice()->setArapDirty();
+    source->setGridDirty();
     source->lattice()->setBackwardUVDirty(true);
+
+    // Set grid scaling
+    if (usePreRegistration) {
+        Point::Affine scalingMat;
+        scalingMat.setIdentity();
+        scalingMat.scale(m_preRegistrationScaling);
+        source->lattice()->setScaling(scalingMat);
+    }
+
+    // init pivot position
     sw0.stop();
 }
 
@@ -150,7 +154,7 @@ void RegistrationManager::alignCenterOfMass(Group *source) {
     source->lattice()->applyTransform(Point::Affine(Point::Translation(diff)), REF_POS, TARGET_POS);
 }
 
-void RegistrationManager::rigidCPD(const QHash<int, Group *> &groups) {
+void RegistrationManager::rigidCPD(const QMap<int, Group *> &groups) {
     cpd::Matrix targetMatrix; 
     cpd::Matrix sourceMatrix;
     Point::VectorType sourceCenterOfMass = Point::VectorType::Zero();
@@ -186,6 +190,7 @@ void RegistrationManager::rigidCPD(const QHash<int, Group *> &groups) {
     cpd::RigidResult result = rigid.run(targetMatrix, sourceMatrix);
     Point::Affine resultTransform;
     resultTransform.matrix() = result.matrix();
+    m_preRegistrationScaling = result.scale;
 
     // Apply the transform to the source positions and store the result in the target positions
     for (Group *group : groups) {
@@ -229,7 +234,7 @@ void RegistrationManager::pushPhaseWithoutCoverage(Group *source) {
     targetCenter = Point::VectorType::Zero();
 
     // Move every quad in the lattice
-    for (QuadPtr quad : source->lattice()->hash()) {
+    for (QuadPtr quad : source->lattice()->quads()) {
         quadDisp = Point::VectorType::Zero();
         diffNeighbor = false;
         pointsMatched = 0;
@@ -239,11 +244,11 @@ void RegistrationManager::pushPhaseWithoutCoverage(Group *source) {
         matchedPoints.clear();
 
         // For each point in the quad, find the closest point in targetStrokes and accumulate the displacement vector
-        quad->elements().forEachPoint(source->getParentKeyframe(), [&](Point *point, unsigned int sId, unsigned int pId) {
+        quad->forwardStrokes().forEachPoint(source->getParentKeyframe(), [&](Point *point, unsigned int sId, unsigned int pId) {
             UVInfo uv = uvs.get(sId, pId);
             queryPoint = source->lattice()->getWarpedPoint(point->pos(), uv.quadKey, uv.uv, TARGET_POS);
             nnResult.init(&nnIdx, &nnDistSq);
-            found = m_registrationKDTree->findNeighbors(nnResult, &queryPoint[0], nanoflann::SearchParameters(10));
+            found = m_registrationKDTree->findNeighbors(nnResult, &queryPoint[0], nanoflann::SearchParams(10));
 
             // If we've found a neighbor and it is in the search radius, we keep its and the query point positions 
             if (nnResult.size() >= 1 && nnDistSq <= searchRadiusSq) {
@@ -346,11 +351,11 @@ void RegistrationManager::pushPhaseWithCoverage(Group *source) {
     // Find registration order
     std::vector<std::pair<int, double>> quadIdxOrder;
     quadIdxOrder.reserve(source->lattice()->size());
-    for (QuadPtr quad : source->lattice()->hash()) {
+    for (QuadPtr quad : source->lattice()->quads()) {
         quad->computeCentroid(TARGET_POS);
         queryPoint = quad->centroid(TARGET_POS);
         nnResultPreProcess.init(&nnIdxPreProcess, &nnDistSqPreProcess);
-        found = m_registrationKDTree->findNeighbors(nnResultPreProcess, &queryPoint[0], nanoflann::SearchParameters(10));
+        found = m_registrationKDTree->findNeighbors(nnResultPreProcess, &queryPoint[0], nanoflann::SearchParams(10));
         if (found && nnDistSqPreProcess <= searchRadiusSq) {
             quadIdxOrder.push_back({quad->key(), nnDistSqPreProcess});
         } else {
@@ -372,11 +377,11 @@ void RegistrationManager::pushPhaseWithCoverage(Group *source) {
         matchedPoints.clear();
 
         // For each point in the quad, find the closest point in targetStrokes and accumulate the displacement vector
-        quad->elements().forEachPoint(source->getParentKeyframe(), [&](Point *point, unsigned int sId, unsigned int pId) {
+        quad->forwardStrokes().forEachPoint(source->getParentKeyframe(), [&](Point *point, unsigned int sId, unsigned int pId) {
             UVInfo uv = uvs.get(sId, pId);
             queryPoint = source->lattice()->getWarpedPoint(point->pos(), uv.quadKey, uv.uv, TARGET_POS);
             nnResult.init(nnIdx, nnDistSq);
-            found = m_registrationKDTree->findNeighbors(nnResult, &queryPoint[0], nanoflann::SearchParameters(10));
+            found = m_registrationKDTree->findNeighbors(nnResult, &queryPoint[0], nanoflann::SearchParams(10));
 
             // find the closest non-visited point 
             int idx = -1;
@@ -416,7 +421,7 @@ void RegistrationManager::pushPhaseWithCoverage(Group *source) {
             quad->computeCentroid(DEFORM_POS);
             queryPoint = quad->centroid(DEFORM_POS);
             nnResult.init(nnIdx, nnDistSq);
-            found = m_registrationKDTree->findNeighbors(nnResult, &queryPoint[0], nanoflann::SearchParameters(10));
+            found = m_registrationKDTree->findNeighbors(nnResult, &queryPoint[0], nanoflann::SearchParams(10));
             for (int i = 0; i < nnResult.size(); ++i) {
                 if (nnDistSq[i] <= cellSq) {
                     usedIdx.insert(nnIdx[i]);
@@ -453,7 +458,7 @@ void RegistrationManager::pushPhaseWithCoverage(Group *source) {
         quad->computeCentroid(DEFORM_POS);
         queryPoint = quad->centroid(DEFORM_POS);
         nnResult.init(nnIdx, nnDistSq);
-        found = m_registrationKDTree->findNeighbors(nnResult, &queryPoint[0], nanoflann::SearchParameters(10));
+        found = m_registrationKDTree->findNeighbors(nnResult, &queryPoint[0], nanoflann::SearchParams(10));
         for (int i = 0; i < nnResult.size(); ++i) {
             if (nnDistSq[i] <= cellSq) {
                 usedIdx.insert(nnIdx[i]);
@@ -473,4 +478,73 @@ void RegistrationManager::pushPhaseWithCoverage(Group *source) {
 void RegistrationManager::resetKDTree() {
     m_registrationDataset.reset(new DatasetAdaptorPoint(m_registrationTargetPoints));
     m_registrationKDTree.reset(new KDTree(2, *m_registrationDataset, nanoflann::KDTreeSingleIndexAdaptorParams(10)));
+}
+
+/**
+ * Compute new TARGET_POS of the given group's lattice based on its pinned quad.
+ * Find the optimal affine transformation between the pins source positions and their target positions.
+ * Doesn't guarantee that the new TARGET_POS contains the pins target positions! 
+ */
+void RegistrationManager::applyOptimalRigidTransformBasedOnPinnedQuads(Group *group) {
+    if (group->lattice() == nullptr) return;
+
+    Eigen::Matrix2d PiPi, QiPi;
+    PiPi.setZero();
+    QiPi.setZero();
+
+    // Compute centroids
+    int count = 0;
+    Point::VectorType sourceCentroid = Point::VectorType::Zero();
+    Point::VectorType targetCentroid = Point::VectorType::Zero();
+    std::vector<Point::VectorType> sources, targets;
+    sources.reserve(group->lattice()->size());
+    targets.reserve(group->lattice()->size());
+    for (QuadPtr q : group->lattice()->quads()) {
+        if (!q->isPinned()) continue;
+        sources.push_back(q->getPoint(q->pinUV(), REF_POS));
+        targets.push_back(q->pinPos());
+        sourceCentroid += sources.back();
+        targetCentroid += targets.back();
+        count++;
+    }
+
+    if (count == 0) {
+        return;
+    } 
+
+    sourceCentroid /= count;
+    targetCentroid /= count;
+
+    if (count == 1) {
+        // 1 pin -> just a translation
+        Point::Affine A(Point::Translation(targetCentroid - sourceCentroid));
+        group->lattice()->applyTransform(A, REF_POS, TARGET_POS);
+        group->setGridDirty();
+        return;
+    } else if (count == 2) {
+        // 2 pins -> translation + rotation + scaling
+        Point::VectorType s = sources[1] - sources[0];
+        Point::VectorType t = targets[1] - targets[0];
+        Point::VectorType translation = targetCentroid - sourceCentroid;
+        double scaling = t.norm() / s.norm();
+        double angleSourceToTarget = Geom::polarAngle(s, t);
+        double angleSource = std::atan2(s.y(), s.x());
+        Point::Affine A(Point::Translation(translation) * Point::Translation(sourceCentroid) * Point::Rotation(angleSourceToTarget) * Point::Rotation(angleSource) * Eigen::Scaling(scaling, 1.0) * Point::Rotation(-angleSource) * Point::Translation(-sourceCentroid));
+        group->lattice()->applyTransform(A, REF_POS, TARGET_POS);
+        group->setGridDirty();
+        return;  
+    } 
+
+    // N pins -> find optimal affine transformation A that maps the pins source positions to their target positions
+    for (unsigned int i = 0; i < count; ++i) {
+        Point::VectorType pi = sources[i] - sourceCentroid;
+        Point::VectorType qi = targets[i] - targetCentroid;
+        PiPi += (pi * pi.transpose());
+        QiPi += (qi * pi.transpose());
+    }
+    Eigen::Matrix2d S = QiPi * PiPi.inverse();
+    Point::VectorType t = targetCentroid - S * sourceCentroid;
+    Point::Affine A = Point::Translation(t) * Eigen::Matrix2d(S);
+    group->lattice()->applyTransform(A, REF_POS, TARGET_POS);
+    group->setGridDirty();
 }

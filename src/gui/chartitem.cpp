@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "chartitem.h"
 #include "editor.h"
 #include "keyframedparams.h"
@@ -12,18 +6,20 @@
 #include "charttickitem.h"
 #include "playbackmanager.h"
 #include "layermanager.h"
-#include "canvasscenemanager.h"
+#include "tabletcanvas.h"
+
 #include "utils/utils.h"
 #include "dialsandknobs.h"
 
 static dkBool k_proxySmooth("Debug->Spacing->Proxy smoothing", false);
+static dkSlider k_proxyStrength("ProxySpacing->Scale", 1, 1, 5, 1);
 
 ChartItem::ChartItem(Editor *editor, VectorKeyFrame *keyframe, QPointF pos) : QGraphicsItem(), m_editor(editor) {
     m_pos = pos;
     m_length = 150;
     m_spacing = nullptr;
     m_nbTicks = 0;
-    m_mode = KEY;
+    m_mode = GROUP;
     if (keyframe != nullptr)
         refresh(keyframe);
 }
@@ -55,15 +51,14 @@ void ChartItem::refresh(VectorKeyFrame *keyframe) {
     }
     m_spacing = nullptr;
 
-    if (keyframe == nullptr) return;
 
-    setChartMode(keyframe->selectedGroup(POST) != nullptr ? GROUP : KEY);
+    setChartMode(keyframe->selectedGroup(POST) != nullptr ? m_mode : KEY);
 
     setSpacingCurve();
 
     makeTicks();
 
-    qDebug() << "#items in chart: " << m_controlTicks.size();
+    // qDebug() << "#items in chart: " << m_controlTicks.size();
 }
 
 /**
@@ -79,11 +74,11 @@ void ChartItem::updateSpacing(int tickIdx, bool refreshAllTicks) {
     if (refreshAllTicks) {
         for (int i = 0; i < m_controlTicks.size(); ++i) {
             if (!m_controlTicks[i]->fixed()) {
-                m_spacing->setKeyframe(Eigen::Vector2f((float)m_controlTicks[i]->idx() /  (float)(m_controlTicks.size() - 1), m_controlTicks[i]->xVal()), (unsigned int)(m_controlTicks[i]->pointIdx()));
+                m_spacing->setKeyframe(Eigen::Vector2d((qreal)m_controlTicks[i]->idx() /  (qreal)(m_controlTicks.size() - 1), m_controlTicks[i]->xVal()), m_controlTicks[i]->elementIdx());
             }
         }   
     } else {
-        m_spacing->setKeyframe(Eigen::Vector2f((float)tickIdx / (float)(m_controlTicks.size() - 1), m_controlTicks[tickIdx]->xVal()), (unsigned int)(m_controlTicks[tickIdx]->pointIdx()));
+        m_spacing->setKeyframe(Eigen::Vector2d((qreal)tickIdx / (qreal)(m_controlTicks.size() - 1), m_controlTicks[tickIdx]->xVal()), m_controlTicks[tickIdx]->elementIdx());
     }
 
     // if multiple groups are selected, copy the new spacing curve into all selected groups
@@ -100,8 +95,44 @@ void ChartItem::updateSpacing(int tickIdx, bool refreshAllTicks) {
 
     update();
 
-    m_editor->scene()->spacingChanged();
     m_keyframe->makeInbetweensDirty();
+}
+
+/**
+ * Update the spacing (animation curve and chart) using the ease in or out proxy 
+ */
+void ChartItem::updateSpacingProxy(ProxyMode mode) {    
+    if (m_spacing == nullptr) {
+        qCritical() << "ERROR: This chart is not associated with any spacing curve";
+        return;
+    }
+
+    for (int i = 0; i < m_controlTicks.size(); ++i) {
+        if (!m_controlTicks[i]->fixed()) {
+            if (mode == INOROUT)
+                m_controlTicks[i]->setXVal(Geom::easeInOrOut((qreal)m_controlTicks[i]->idx() /  (qreal)(m_controlTicks.size() - 1), -(m_proxyTicks[0]->xVal() * 2.0 - 1.0) * k_proxyStrength));
+            else if (mode == INANDOUT) {
+                m_controlTicks[i]->setXVal(Geom::easeInAndOut((qreal)m_controlTicks[i]->idx() /  (qreal)(m_controlTicks.size() - 1), -(m_proxyTicks[0]->xVal() * 2.0 - 1.0) * k_proxyStrength));
+            }
+            m_spacing->setKeyframe(Eigen::Vector2d((qreal)m_controlTicks[i]->idx() /  (qreal)(m_controlTicks.size() - 1), m_controlTicks[i]->xVal()), m_controlTicks[i]->elementIdx());
+        }
+    }
+
+    // if multiple groups are selected, copy the new spacing curve into all selected groups
+    if (m_mode == PROXY) {
+        for (Group *group : m_keyframe->selection().selectedPostGroups()) {
+            if (m_spacing->nbPoints() != group->spacing()->curve()->nbPoints()) qCritical() << "ERROR: groups have different spacing sampling";               
+            for (int i = 0; i < m_spacing->nbPoints(); i++) {
+                group->spacing()->curve()->setKeyframe(m_spacing->point(i), i);
+            }
+        }
+    }
+
+    synchronizeSpacingCurve(true, true);
+
+    update();
+
+    m_keyframe->makeInbetweensDirty();   
 }
 
 /**
@@ -119,13 +150,18 @@ void ChartItem::resetControlTicks() {
 }
 
 void ChartItem::setChartMode(ChartMode mode) {
-    if (m_keyframe == nullptr) return;
     m_mode = mode;
 }
 
 void ChartItem::setPos(QPointF pos) {
     m_pos = pos;
     for (ChartTickItem *item : m_controlTicks) {
+        item->updatePos();
+    }
+    for (ChartTickItem *item : m_partialTicks) {
+        item->updatePos();
+    }
+    for (ChartTickItem *item : m_proxyTicks) {
         item->updatePos();
     }
 }
@@ -135,16 +171,39 @@ void ChartItem::setPos(QPointF pos) {
  */
 void ChartItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) {
     QPen pen(Qt::black);
-    pen.setWidth(2);
-    painter->setPen(pen);
+    QFontMetrics fontMetrics = QFontMetrics(m_editor->tabletCanvas()->canvasFont());
+
     float yOffset = ChartTickItem::HEIGHT / 2.0f;
     float xOffset = ChartTickItem::WIDTH / 2.0f;
     float xStart = xOffset + m_pos.x();
-    painter->drawLine(xStart, m_pos.y() + yOffset, xStart + m_length, m_pos.y() + yOffset);
-
-    pen.setWidthF(1.0f);
-    pen.setColor(QColor(200, 16, 16));
+    pen.setWidth(2);
     painter->setPen(pen);
+
+    int prevFrameNumber = m_keyframe->parentLayer()->getVectorKeyFramePosition(m_keyframe);
+    int nextFrameNumber = m_keyframe->parentLayer()->getNextKeyFramePosition(prevFrameNumber);
+
+    QString strPrevFrameNumber = QString("%1").arg(prevFrameNumber);
+    QString strNextFrameNumber = QString("%1").arg(nextFrameNumber);
+    QRect rectPrevFrameNumber = fontMetrics.tightBoundingRect(strPrevFrameNumber);
+    QRect rectNextFrameNumber = fontMetrics.tightBoundingRect(strNextFrameNumber);
+    int radiusPrevFrame = std::max(rectPrevFrameNumber.width(), rectPrevFrameNumber.height()) * 0.75;
+    int radiusNextFrame = std::max(rectNextFrameNumber.width(), rectNextFrameNumber.height()) * 0.75;
+    int radius = std::max(radiusNextFrame, radiusPrevFrame);
+
+    QFont f = m_editor->tabletCanvas()->canvasFont();
+    f.setPointSize(22);
+    painter->setFont(f);
+    painter->drawEllipse(QPointF(xStart, m_pos.y() - yOffset - radius), radius, radius);
+    painter->drawEllipse(QPointF(xStart + m_length, m_pos.y() - yOffset - radius), radius, radius);
+    painter->drawText(xStart - (rectPrevFrameNumber.width() * 0.5), m_pos.y() - yOffset - radius * 0.5, strPrevFrameNumber);
+    painter->drawText(xStart + m_length - (rectNextFrameNumber.width() * 0.5), m_pos.y() - yOffset - radius * 0.5, strNextFrameNumber);
+
+    // rectPrevFrameNumber.translate(QPoint(xStart - radius * 0.5, m_pos.y() - yOffset - radius * 0.5));
+    // rectNextFrameNumber.translate(QPoint(xStart + m_length - radius * 0.5, m_pos.y() - yOffset - radius * 0.5));
+    // painter->drawRect(rectPrevFrameNumber);
+    // painter->drawRect(rectNextFrameNumber);
+
+    painter->drawLine(xStart, m_pos.y() + yOffset, xStart + m_length, m_pos.y() + yOffset);
 }
 
 void ChartItem::mousePressEvent(QGraphicsSceneMouseEvent *event) {
@@ -159,17 +218,25 @@ void ChartItem::mouseMoveEvent(QGraphicsSceneMouseEvent *event) {
 }
 
 void ChartItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event) {
-    qDebug() << "double click chart";
     event->accept();
 }
 
 void ChartItem::wheelEvent(QGraphicsSceneWheelEvent *event) {
     int delta = event->delta();
-    if (delta < 0)
-        m_length -= 8.0f;
-    else
-        m_length += 8.0f;
+    if (delta < 0 && m_length >= 20.0f) {
+        m_length -= 10.0f;
+        m_pos.setX(m_pos.x() + 5.0f);
+    } else {
+        m_length += 10.0f;
+        m_pos.setX(m_pos.x() - 5.0f);
+    }
     for (ChartTickItem *item : m_controlTicks) {
+        item->updatePos();
+    }
+    for (ChartTickItem *item : m_partialTicks) {
+        item->updatePos();
+    }
+    for (ChartTickItem *item : m_proxyTicks) {
         item->updatePos();
     }
     update();
@@ -233,21 +300,21 @@ void ChartItem::synchronizeSpacingCurve(bool withPrev, bool withNext) {
         // TODO: clamp if the new tangent goes out of bounds (unit square)
         Point::VectorType newTangent = tangentOut.cwiseProduct(Point::VectorType(((double)curCurveSize) / nextCurveSize, curGroupMotionEnergy / nextGroupMotionEnergy));
         nextProxy.setP1(nextProxy.getP0() + newTangent);
-        Eigen::Vector2f nextSpacingFirstTick = nextCurve->point(1);
+        Eigen::Vector2d nextSpacingFirstTick = nextCurve->point(1);
         double normalizedEnergy = std::clamp(nextProxy.evalYFromX(nextSpacingFirstTick.x()), 1e-5, 1.0 - 1e-5);
-        nextCurve->setKeyframe(Eigen::Vector2f(nextSpacingFirstTick.x(), normalizedEnergy), 1);
+        nextCurve->setKeyframe(Eigen::Vector2d(nextSpacingFirstTick.x(), normalizedEnergy), 1);
 
         // Diffuse to next ticks
         if (!k_proxySmooth) {
             double newSpan = nextCurve->points().back().y() - normalizedEnergy;
             for (int i = 2; i < nextCurveSize - 1; ++i) {
                 float tickX = nextCurve->point(i).x();
-                nextCurve->setKeyframe(Eigen::Vector2f(tickX, std::min(normalizedEnergy + relativePos[i - 2] * newSpan, 1.0)), i);
+                nextCurve->setKeyframe(Eigen::Vector2d(tickX, std::min(normalizedEnergy + relativePos[i - 2] * newSpan, 1.0)), i);
             }
         } else {
             for (int i = 2; i < nextCurveSize - 1; ++i) {
                 float tickX = nextCurve->point(i).x();
-                nextCurve->setKeyframe(Eigen::Vector2f(tickX, std::min(nextProxy.evalYFromX(tickX), 1.0)), i);
+                nextCurve->setKeyframe(Eigen::Vector2d(tickX, std::min(nextProxy.evalYFromX(tickX), 1.0)), i);
             }        
         }
 
@@ -266,14 +333,14 @@ void ChartItem::synchronizeSpacingCurve(bool withPrev, bool withNext) {
         // TODO: clamp if the new tangent goes out of bounds (unit square)
         Point::VectorType newTangent = tangentIn.cwiseProduct(Point::VectorType(((double)curCurveSize) / prevCurveSize, curGroupMotionEnergy / prevGroupMotionEnergy));
         prevProxy.setP2(prevProxy.getP3() + newTangent);
-        Eigen::Vector2f prevSpacingLastTick = prevCurve->point(prevCurveSize - 2);
+        Eigen::Vector2d prevSpacingLastTick = prevCurve->point(prevCurveSize - 2);
         double normalizedEnergy = std::clamp(prevProxy.evalYFromX(prevSpacingLastTick.x()), 1e-5, 1.0 - 1e-5);
-        prevCurve->setKeyframe(Eigen::Vector2f(prevSpacingLastTick.x(), normalizedEnergy), prevCurveSize - 2);
+        prevCurve->setKeyframe(Eigen::Vector2d(prevSpacingLastTick.x(), normalizedEnergy), prevCurveSize - 2);
 
         // Diffuse to next ticks
         for (int i = 1; i < prevCurveSize - 2; ++i) {
             float tickX = prevCurve->point(i).x();
-            prevCurve->setKeyframe(Eigen::Vector2f(tickX, std::min(prevProxy.evalYFromX(tickX), 1.0)), i);
+            prevCurve->setKeyframe(Eigen::Vector2d(tickX, std::min(prevProxy.evalYFromX(tickX), 1.0)), i);
         }        
 
         prevKey->makeInbetweensDirty();
@@ -291,6 +358,8 @@ void ChartItem::setSpacingCurve() {
             hide();
             break;
         case GROUP:
+        case PARTIAL:
+        case PROXY:
             show();
             if (m_keyframe->selectedGroup(POST) == nullptr) {
                 setChartMode(KEY);
@@ -319,8 +388,6 @@ void ChartItem::makeTicks(unsigned int nbTicks) {
     // yes we may lose information
     int inbetweens = m_keyframe->parentLayer()->stride(m_keyframe->parentLayer()->getVectorKeyFramePosition(m_keyframe)) - 1;
     if (inbetweens < 0) return;
-    // qDebug() << "stride: " << m_keyframe->parentLayer()->stride(m_keyframe->parentLayer()->getVectorKeyFramePosition(m_keyframe));
-    // qDebug() << "frame: " << m_keyframe->parentLayer()->getVectorKeyFramePosition(m_keyframe);
     if (m_spacing->nbPoints() - 2 != inbetweens) {
         m_spacing->resample(inbetweens);
     }
@@ -328,8 +395,28 @@ void ChartItem::makeTicks(unsigned int nbTicks) {
 
     for (int i = 0; i < m_spacing->nbPoints(); ++i) {
         bool fixed = i == 0 || i == m_spacing->nbPoints() - 1;
-        m_controlTicks.append(new ChartTickItem(this, CONTROL, i, m_pos.x(), m_pos.y(), m_spacing->point(i).y(), i, fixed));
+        m_controlTicks.append(new ChartTickItem(this, ChartTickItem::CONTROL, i, m_pos.x(), m_pos.y(), m_spacing->point(i).y(), i, fixed));
         m_controlTicks.back()->setParentItem(this);
+    }
+
+    if (m_mode == PARTIAL) {
+        int i = 0;
+        for (auto it = m_keyframe->orderPartials().partials().constBegin(); it != m_keyframe->orderPartials().partials().constEnd(); ++it) {
+            if (it.key() == 0.0) continue;
+            m_partialTicks.append(new ChartTickItem(this, ChartTickItem::TICKORDERPARTIAL, i, m_pos.x(), m_pos.y(), m_spacing->evalAt(it.key()), it.value().id(), false));
+            m_partialTicks.back()->setParentItem(this); 
+            ++i;           
+        }
+        Group *group = m_keyframe->selectedGroup(POST);
+        for (auto it = group->drawingPartials().partials().constBegin(); it != group->drawingPartials().partials().constEnd(); ++it) {
+            if (it.key() == 0.0) continue;
+            m_partialTicks.append(new ChartTickItem(this, ChartTickItem::TICKDRAWINGPARTIAL, i, m_pos.x(), m_pos.y(), m_spacing->evalAt(it.key()), it.value().id(), false));
+            m_partialTicks.back()->setParentItem(this); 
+            ++i;           
+        }
+    } else if (m_mode == PROXY) {
+        m_proxyTicks.append(new ChartTickItem(this, ChartTickItem::TICKPROXY, 0, m_pos.x(), m_pos.y(), 0.5, 0, false));
+        m_proxyTicks.back()->setParentItem(this); 
     }
 }
 
@@ -337,6 +424,16 @@ void ChartItem::clearTicks() {
     for (ChartTickItem *item : m_controlTicks) {
         item->setParentItem(nullptr);
     }
+    for (ChartTickItem *item : m_partialTicks) {
+        item->setParentItem(nullptr);
+    }
+    for (ChartTickItem *item : m_proxyTicks) {
+        item->setParentItem(nullptr);
+    }
     qDeleteAll(m_controlTicks);
+    qDeleteAll(m_partialTicks);
+    qDeleteAll(m_proxyTicks);
     m_controlTicks.resize(0);
+    m_partialTicks.resize(0);
+    m_proxyTicks.resize(0);
 }

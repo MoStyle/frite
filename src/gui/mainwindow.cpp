@@ -1,13 +1,52 @@
-/*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2008-2009 Mj Mendoza IV
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
-
+/****************************************************************************
+**
+** Copyright (C) 2016 The Qt Company Ltd.
+** Contact: https://www.qt.io/licensing/
+**
+** This file is part of the examples of the Qt Toolkit.
+**
+** $QT_BEGIN_LICENSE:BSD$
+** Commercial License Usage
+** Licensees holding valid commercial Qt licenses may use this file in
+** accordance with the commercial license agreement provided with the
+** Software or, alternatively, in accordance with the terms contained in
+** a written agreement between you and The Qt Company. For licensing terms
+** and conditions see https://www.qt.io/terms-conditions. For further
+** information use the contact form at https://www.qt.io/contact-us.
+**
+** BSD License Usage
+** Alternatively, you may use this file under the terms of the BSD license
+** as follows:
+**
+** "Redistribution and use in source and binary forms, with or without
+** modification, are permitted provided that the following conditions are
+** met:
+**   * Redistributions of source code must retain the above copyright
+**     notice, this list of conditions and the following disclaimer.
+**   * Redistributions in binary form must reproduce the above copyright
+**     notice, this list of conditions and the following disclaimer in
+**     the documentation and/or other materials provided with the
+**     distribution.
+**   * Neither the name of The Qt Company Ltd nor the names of its
+**     contributors may be used to endorse or promote products derived
+**     from this software without specific prior written permission.
+**
+**
+** THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+** "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+** LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+** A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+** OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+** SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+** LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+** OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
+**
+** $QT_END_LICENSE$
+**
+****************************************************************************/
 #include <QSettings>
 #include <QStatusBar>
 #include <QPushButton>
@@ -34,13 +73,9 @@
 #include "tools/picktool.h"
 #include "keyframedparams.h"
 
-QTextEdit* MainWindow::s_textEdit = nullptr;
-
 const int MAX_RECENT_WORKINGSET = 9;
 
 MainWindow::MainWindow(TabletCanvas* canvas) : m_canvas(canvas), m_projectDialog(nullptr), m_preferenceDialog(nullptr) {
-    s_textEdit = new QTextEdit;
-
     setCentralWidget(m_canvas);
     setUnifiedTitleAndToolBarOnMac(true);
     setTabShape(QTabWidget::Rounded);
@@ -78,19 +113,6 @@ MainWindow::MainWindow(TabletCanvas* canvas) : m_canvas(canvas), m_projectDialog
     connect(m_colorBox, &ColorBox::colorChanged, m_editor->color(), &ColorManager::setColor);
     connect(m_editor->color(), &ColorManager::colorChanged, m_colorBox, &ColorBox::setColor);
     connect(m_colorBox, &ColorBox::colorChanged, this, &MainWindow::updateColorIcon);
-    
-    m_consoleDock = new QDockWidget("Log console", this);
-    m_consoleDock->setObjectName(m_consoleDock->windowTitle());
-    QWidget *console = new QWidget();
-    QVBoxLayout *layout = new QVBoxLayout;
-    QPushButton *clearButton = new QPushButton("Clear");
-    connect(clearButton, &QPushButton::clicked, s_textEdit, &QTextEdit::clear);
-    layout->addWidget(s_textEdit);
-    layout->addWidget(clearButton);
-    console->setLayout(layout);
-    m_consoleDock->setWidget(console);
-    s_textEdit->setReadOnly(true);
-    addDockWidget(Qt::RightDockWidgetArea, m_consoleDock);
 
     makeTimeLineConnections();
 
@@ -108,15 +130,19 @@ MainWindow::MainWindow(TabletCanvas* canvas) : m_canvas(canvas), m_projectDialog
     readSettings();
 
     m_fileManager = new FileManager(this);
+    m_fileManager->createWorkingDir();
     setWindowTitle("[*]" + m_fileManager->fileName() + " - Frite");
     updateTitleSaveState(false);
     setAcceptDrops(true);
 
     m_editor->layers()->newLayer();
     m_editor->scrubTo(0);
+
+    m_editor->tools()->setTool(Tool::Select);
 }
 
 MainWindow::~MainWindow() { 
+    m_fileManager->deleteWorkingDir();
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event) { event->acceptProposedAction(); }
@@ -188,6 +214,7 @@ void MainWindow::newProject() {
         m_editor->scrubTo(0);
         m_undoView->setEmptyLabel("New project");
         m_editor->undoStack()->clear();
+        m_fileManager->createWorkingDir();
         m_fileManager->resetFileName();
         setWindowTitle("[*]" + m_fileManager->fileName() + " - Frite");
         updateTitleSaveState(false);
@@ -232,7 +259,6 @@ bool MainWindow::openProject(const QString& filename) {
         updateTitleSaveState(true);
         m_undoView->setEmptyLabel("Open project");
         m_editor->undoStack()->clear();
-        qDebug() << "editor frame before : " << m_editor->playback()->currentFrame();
         m_editor->scrubTo(0);
         return true;
     }
@@ -280,13 +306,13 @@ void MainWindow::exportImageSequence() {
 
     // Export
     QSize exportSize = QSize(m_canvas->canvasRect().width(), m_canvas->canvasRect().height());
-    if (exportSize.width() < 3840 || exportSize.height() < 2160) exportSize.scale(3840, 2160, Qt::KeepAspectRatioByExpanding);
-    // if (exportSize.width() < 3840 || exportSize.height() < 2160) exportSize.scale(3800, 1440, Qt::KeepAspectRatioByExpanding);
+    // if (exportSize.width() < 3840 || exportSize.height() < 2160) exportSize.scale(1920, 1080, Qt::KeepAspectRatioByExpanding);
+    if (exportSize.width() < 3840 || exportSize.height() < 2160) exportSize.scale(3840, 2160, Qt::KeepAspectRatio);
     m_editor->exportFrames(strFilePath, exportSize);
     statusBar()->showMessage("Sequence exported", 3000);
 }
 
-void MainWindow::about() { QMessageBox::about(this, tr("About frite"), tr("<b>frite</b> is a non-linear 2D animation software developped as part of the <a href='https://benardp.github.io/mostyle/'>MoStyle ANR project</a> by Melvin Even, Pierre Bénard and Pascal Barla. It is originally based on <a href='https://www.pencil2d.org/'>Pencil2D</a>.")); }
+void MainWindow::about() { QMessageBox::about(this, tr("About Frite"), tr("2D animation software")); }
 
 void MainWindow::createMenus() {
 #ifdef Q_OS_MAC
@@ -339,30 +365,35 @@ void MainWindow::createMenus() {
     editMenu->addAction(styleManager->getIcon("paste"), tr("&Paste"), m_editor, &Editor::paste, QKeySequence::Paste);
     editMenu->addSeparator();
     editMenu->addAction(styleManager->getIcon("selectAll"), tr("&Select All"), m_canvas, &TabletCanvas::selectAll, QKeySequence::SelectAll);
-    editMenu->addAction(styleManager->getIcon("deselectAll"), tr("&Deselect"), m_canvas, &TabletCanvas::deselectAll, QKeySequence(tr("Escape")));
+    editMenu->addAction(styleManager->getIcon("deselectAll"), tr("&Deselect"), m_editor, &Editor::deselectAll, QKeySequence(tr("Escape")));
     editMenu->addAction(styleManager->getIcon("deselectAll"), tr("Deselect in all layers"), m_editor, &Editor::deselectInAllLayers, QKeySequence(tr("Shift+Escape")));
+    editMenu->addSeparator();
+    editMenu->addAction(styleManager->getIcon("configure"), tr("Increase keyframe exposure"), m_editor, &Editor::increaseCurrentKeyExposure, QKeySequence(Qt::Key_Plus));
+    editMenu->addAction(styleManager->getIcon("configure"), tr("Decrease keyframe exposure"), m_editor, &Editor::decreaseCurrentKeyExposure, QKeySequence(Qt::Key_Minus));
     editMenu->addSeparator();
     editMenu->addAction(styleManager->getIcon("configure"), "Preferences", this, &MainWindow::setPreferences, QKeySequence::Preferences);
 
     QMenu* actionsMenu = menuBar()->addMenu("&Actions");
     actionsMenu->addAction(styleManager->getIcon("onion"), tr("Onion skin"), m_editor, &Editor::toggleOnionSkin, QKeySequence(tr("O")));
-    // actionsMenu->addSeparator();
     actionsMenu->addSection("Keyframe");
     actionsMenu->addAction(styleManager->getIcon("delete"), tr("Clear drawing"), m_editor, &Editor::clearCurrentFrame, QKeySequence(tr("K")));
+    actionsMenu->addAction(styleManager->getIcon("fit"), tr("New group"), m_editor, &Editor::drawInNewGroup, QKeySequence(tr("Return")));
     actionsMenu->addAction(styleManager->getIcon("delete"), tr("Delete group"), m_editor, &Editor::deleteGroup, QKeySequence::Delete);
-    actionsMenu->addAction(styleManager->getIcon("delete"), tr("Clear deformation"), m_editor, &Editor::clearARAPWarp, QKeySequence(tr("Ctrl+K")));
+    actionsMenu->addAction(styleManager->getIcon("fit"), tr("Split groups"), m_editor, &Editor::splitGridIntoSingleConnectedComponent,QKeySequence(tr("Ctrl+Return")));
     actionsMenu->addAction(styleManager->getIcon("fit"), tr("Convert inbetween to breakdown"), m_editor, &Editor::convertToBreakdown, QKeySequence(tr("B")));
-    actionsMenu->addAction(styleManager->getIcon("fit"), tr("Copy selected groups to the next keyframe"), m_editor, &Editor::copyGroupToNextKeyFrame, QKeySequence(tr("C")));
+    actionsMenu->addAction(styleManager->getIcon("fit"), tr("Copy selected groups to the next keyframe"), this, [&]() { m_editor->copyGroupToNextKeyFrame(false); }, QKeySequence(tr("C")));
     actionsMenu->addSection("Matching");
     actionsMenu->addAction(styleManager->getIcon("fit"), tr("Matching"), this, [&]() { m_editor->registerFromRestPosition(); }, QKeySequence(tr("M")));
     actionsMenu->addAction(styleManager->getIcon("fit"), tr("Matching from current state"), this, [&]() { m_editor->registerFromTargetPosition(); }, QKeySequence(tr("Ctrl+M")));
-    actionsMenu->addAction(styleManager->getIcon("fit"), tr("Regularize"), m_editor, &Editor::regularizeLattice, QKeySequence(tr("R")));
+    // actionsMenu->addAction(styleManager->getIcon("fit"), tr("Regularize"), m_editor, &Editor::regularizeLattice, QKeySequence(tr("R")));
+    actionsMenu->addAction(styleManager->getIcon("delete"), tr("Reset matching"), m_editor, &Editor::clearARAPWarp, QKeySequence(tr("Ctrl+K")));
     actionsMenu->addSection("Interpolation");
-    actionsMenu->addAction(styleManager->getIcon("fit"), tr("Toggle cross-fade"), m_editor, &Editor::bakeNextPreGroup, QKeySequence(tr("C")));
+    actionsMenu->addAction(styleManager->getIcon("fit"), tr("Toggle cross-fade"), m_editor, &Editor::toggleCrossFade, QKeySequence(tr("Shift+C")));
     actionsMenu->addAction(styleManager->getIcon("fit"), tr("Fade-out"), m_editor, &Editor::makeGroupFadeOut, QKeySequence(tr("Shift+Q")));
     actionsMenu->addAction(styleManager->getIcon("fit"), tr("Smooth trajectory (in time)"), m_editor, &Editor::makeTrajectoryC1Continuous);
     actionsMenu->addSection("Misc. & Debug");
     actionsMenu->addAction(styleManager->getIcon("fit"), tr("Recompute inbetweens interval"), m_editor, &Editor::makeInbetweensDirty);
+    actionsMenu->addAction(styleManager->getIcon("fit"), tr("Force clear cross-fade"), m_editor, &Editor::clearCrossFade);
     actionsMenu->addAction(styleManager->getIcon("fit"), tr("Debug report"), m_editor, &Editor::debugReport, QKeySequence(tr("Shift+I")));
 
     QToolBar* toolBar = new QToolBar("Menu", this);
@@ -482,7 +513,6 @@ void MainWindow::createMenus() {
     m_windowsMenu->addAction(m_historyDock->toggleViewAction());
     m_windowsMenu->addAction(m_onionSkinsDock->toggleViewAction());
     m_windowsMenu->addAction(m_colorBox->toggleViewAction());
-    m_windowsMenu->addAction(m_consoleDock->toggleViewAction());
     m_windowsMenu->addAction(m_groupsWidget->toggleViewAction());
     QStringList separate_windows("Options");
     QMetaEnum e = QMetaEnum::fromType<Tool::ToolType>();
@@ -522,6 +552,10 @@ void MainWindow::createToolBar() {
     eraserToolAction->setData(Tool::Eraser);
     eraserToolAction->setShortcut(tr("E"));
     eraserToolAction->setCheckable(true);
+    QAction* localMaskToolAction = toolBar->addAction(styleManager->getIcon("eraser"), tr("Visibility"));
+    localMaskToolAction->setData(Tool::LocalMask);
+    localMaskToolAction->setShortcut(tr("V"));
+    localMaskToolAction->setCheckable(true);
     QAction* handToolAction = toolBar->addAction(styleManager->getIcon("move"),tr("Pan"));
     handToolAction->setData(Tool::Hand);
     handToolAction->setShortcut(tr("H"));
@@ -540,6 +574,13 @@ void MainWindow::createToolBar() {
     lassoToolAction->setCheckable(true);
     lassoToolAction->setShortcut(tr("G"));
     selectButton->addAction(lassoToolAction);
+
+    QAction* pickStrokesAction = new QAction(styleManager->getIcon("lasso"), tr("Copy strokes from onion skin"));
+    pickStrokesAction->setData(Tool::CopyStrokes);
+    pickStrokesAction->setCheckable(true);
+    // pickStrokesAction->setShortcut(tr("G"));
+    selectButton->addAction(pickStrokesAction);
+
     toolBar->addSeparator();
 
     // MATCHING TOOLS
@@ -554,7 +595,7 @@ void MainWindow::createToolBar() {
     rigidDeformToolAction->setShortcut(tr("Ctrl+W"));
     rigidDeformToolAction->setCheckable(true);
     matchingButton->addAction(rigidDeformToolAction);
-    QAction* warpToolAction = new QAction(styleManager->getIcon("warp"), tr("Non-rigid matching"));
+    QAction* warpToolAction = toolBar->addAction(styleManager->getIcon("warp"), tr("Non-rigid matching"));
     warpToolAction->setData(Tool::Warp);
     warpToolAction->setShortcut(tr("W"));
     warpToolAction->setCheckable(true);
@@ -574,6 +615,7 @@ void MainWindow::createToolBar() {
 
     toolBar->addSeparator();
 
+    // SPACING TOOLS
     QAction* moveFramesToolAction = toolBar->addAction(styleManager->getIcon("spacing"), tr("Move frames"));
     moveFramesToolAction->setData(Tool::MoveFrames);
     moveFramesToolAction->setShortcut(tr("I"));
@@ -585,6 +627,15 @@ void MainWindow::createToolBar() {
     halvesToolAction->setShortcut(tr("Ctrl+I"));
     halvesToolAction->setCheckable(true);
     spacingButton->addAction(halvesToolAction);
+    QAction* spacingProxyToolAction = new QAction(styleManager->getIcon("spacing"), tr("Proxy spacing"));
+    spacingProxyToolAction->setData(Tool::ProxySpacing);
+    // spacingProxyToolAction->setShortcut(tr("Ctrl+I"));
+    spacingProxyToolAction->setCheckable(true);
+    spacingButton->addAction(spacingProxyToolAction);
+    QAction* movePartialsToolAction = new QAction(styleManager->getIcon("spacing"), tr("Move partials"));
+    movePartialsToolAction->setData(Tool::MovePartials);
+    movePartialsToolAction->setCheckable(true);
+    spacingButton->addAction(movePartialsToolAction);
 
     toolBar->addSeparator();
 
@@ -606,6 +657,61 @@ void MainWindow::createToolBar() {
     tangentToolAction->setCheckable(true);
     trajButton->addAction(tangentToolAction);
 
+    toolBar->addSeparator();
+
+    // MASK TOOL
+    QAction* groupOrderingToolAction = toolBar->addAction(styleManager->getIcon("ordering"), tr("Group ordering"));
+    groupOrderingToolAction->setData(Tool::GroupOrdering);
+    groupOrderingToolAction->setCheckable(true);
+    groupOrderingToolAction->setShortcut(tr("Ctrl+G"));
+    QToolButton *maskButton = dynamic_cast<QToolButton*>(toolBar->widgetForAction(groupOrderingToolAction));
+    maskButton->setPopupMode(QToolButton::InstantPopup);
+    QAction* maskPenToolAction = new QAction(styleManager->getIcon("pen"), tr("Mask pen"));
+    maskPenToolAction->setData(Tool::MaskPen);
+    // maskPenToolAction->setShortcut(tr("P"));
+    maskPenToolAction->setCheckable(true);
+    maskButton->addAction(maskPenToolAction);
+    // QAction* visibilityToolAction = new QAction(styleManager->getIcon("pen"), tr("Visibility"));
+    // visibilityToolAction->setData(Tool::Visibility);
+    // visibilityToolAction->setCheckable(true);
+    // maskButton->addAction(visibilityToolAction);
+
+    toolBar->addSeparator();
+
+    // DEBUG TOOL
+    QAction* debugToolAction = toolBar->addAction(styleManager->getIcon("fit"), tr("Debug"));
+    debugToolAction->setData(Tool::Debug);
+    // debugToolAction->setShortcut(tr("D"));
+    debugToolAction->setCheckable(true);
+
+    // PIVOT TOOLS
+    QAction* pivotCreationToolAction = toolBar->addAction(styleManager->getIcon("trajectory"), tr("Create pivot"));
+    pivotCreationToolAction->setData(Tool::PivotCreation);
+    // pivotCreationToolAction->setShortcut(tr(""));
+    pivotCreationToolAction->setCheckable(true);
+    QToolButton *pivotButton = dynamic_cast<QToolButton*>(toolBar->widgetForAction(pivotCreationToolAction));
+    pivotButton->setPopupMode(QToolButton::InstantPopup);
+
+    QAction * pivotEditToolAction = new QAction(styleManager->getIcon("trajectory"), tr("Edit pivot"));
+    pivotEditToolAction->setData(Tool::PivotEdit);
+    pivotButton->addAction(pivotEditToolAction);
+    QAction* pivotTangentToolAction = new QAction(styleManager->getIcon("trajectory"), tr("Edit pivots tangents"));
+    pivotTangentToolAction->setData(Tool::PivotTangent);
+    pivotTangentToolAction->setCheckable(true);
+    pivotButton->addAction(pivotTangentToolAction);
+    QAction * pivotRotationToolAction = new QAction(styleManager->getIcon("trajectory"), tr("Edit pivot rotation"));
+    pivotRotationToolAction->setData(Tool::PivotRotation);
+    pivotRotationToolAction->setCheckable(true);
+    pivotButton->addAction(pivotRotationToolAction);    
+    QAction* pivotScalingToolAction = new QAction(styleManager->getIcon("trajectory"), tr("Edit pivot scaling"));
+    pivotScalingToolAction->setData(Tool::PivotScaling);
+    pivotScalingToolAction->setCheckable(true);
+    pivotButton->addAction(pivotScalingToolAction);    
+    QAction* pivotTranslationToolAction = new QAction(styleManager->getIcon("trajectory"), tr("Layer translation"));
+    pivotTranslationToolAction->setData(Tool::PivotTranslation);
+    pivotTranslationToolAction->setCheckable(true);
+    pivotButton->addAction(pivotTranslationToolAction);
+
     m_toolGroup = new QActionGroup(this);
     m_toolGroup->addAction(drawToolAction);
     m_toolGroup->addAction(drawEndKeyframeToolAction);
@@ -622,8 +728,22 @@ void MainWindow::createToolBar() {
     m_toolGroup->addAction(drawTrajectoryToolAction);
     m_toolGroup->addAction(tangentToolAction);
     m_toolGroup->addAction(fillGridToolAction);
+    m_toolGroup->addAction(pivotCreationToolAction);
+    m_toolGroup->addAction(pivotEditToolAction);
+    m_toolGroup->addAction(pivotTangentToolAction);
+    m_toolGroup->addAction(pivotRotationToolAction);
+    m_toolGroup->addAction(pivotScalingToolAction);
+    m_toolGroup->addAction(pivotTranslationToolAction);
     m_toolGroup->addAction(moveFramesToolAction);
     m_toolGroup->addAction(halvesToolAction);
+    m_toolGroup->addAction(maskPenToolAction);
+    m_toolGroup->addAction(groupOrderingToolAction);
+    m_toolGroup->addAction(debugToolAction);
+    m_toolGroup->addAction(spacingProxyToolAction);
+    m_toolGroup->addAction(movePartialsToolAction);
+    m_toolGroup->addAction(localMaskToolAction);
+    m_toolGroup->addAction(pickStrokesAction);
+    // m_toolGroup->addAction(visibilityToolAction);
     drawToolAction->setChecked(true);
 
     addToolBar(Qt::TopToolBarArea, toolBar);
@@ -647,8 +767,22 @@ void MainWindow::createToolBar() {
     connect(m_editor->tools(), &ToolsManager::drawTrajectorySelected, this, [&]{ m_toolGroup->actions().at(12); });
     connect(m_editor->tools(), &ToolsManager::tangentSelected, this, [&]{ m_toolGroup->actions().at(13); });
     connect(m_editor->tools(), &ToolsManager::fillGridSelected, this, [&]{ m_toolGroup->actions().at(14); });
-    connect(m_editor->tools(), &ToolsManager::moveFramesSelected, this, [&]{ m_toolGroup->actions().at(15); });
-    connect(m_editor->tools(), &ToolsManager::halvesSelected, this, [&]{ m_toolGroup->actions().at(16); });
+    connect(m_editor->tools(), &ToolsManager::pivotCreationSelected, this, [&]{ m_toolGroup->actions().at(15); });
+    connect(m_editor->tools(), &ToolsManager::pivotEditSelected, this, [&]{ m_toolGroup->actions().at(16); });
+    connect(m_editor->tools(), &ToolsManager::pivotTangentSelected, this, [&]{ m_toolGroup->actions().at(17); });
+    connect(m_editor->tools(), &ToolsManager::pivotRotationSelected, this, [&]{ m_toolGroup->actions().at(18); });
+    connect(m_editor->tools(), &ToolsManager::pivotScalingSelected, this, [&]{ m_toolGroup->actions().at(19); });
+    connect(m_editor->tools(), &ToolsManager::pivotTranslationSelected, this, [&]{ m_toolGroup->actions().at(20); });
+    connect(m_editor->tools(), &ToolsManager::moveFramesSelected, this, [&]{ m_toolGroup->actions().at(21); });
+    connect(m_editor->tools(), &ToolsManager::halvesSelected, this, [&]{ m_toolGroup->actions().at(22); });
+    connect(m_editor->tools(), &ToolsManager::maskPenSelected, this, [&]{ m_toolGroup->actions().at(23); });
+    connect(m_editor->tools(), &ToolsManager::groupOrderingSelected, this, [&]{ m_toolGroup->actions().at(24); });
+    connect(m_editor->tools(), &ToolsManager::debugSelected, this, [&]{ m_toolGroup->actions().at(25); });
+    connect(m_editor->tools(), &ToolsManager::proxySpacingSelected, this, [&]{ m_toolGroup->actions().at(26); });
+    connect(m_editor->tools(), &ToolsManager::movePartialsSelected, this, [&]{ m_toolGroup->actions().at(27); });
+    connect(m_editor->tools(), &ToolsManager::localMaskSelected, this, [&]{ m_toolGroup->actions().at(28); });
+    connect(m_editor->tools(), &ToolsManager::pickStrokesSelected, this, [&]{ m_toolGroup->actions().at(29); });
+    // connect(m_editor->tools(), &ToolsManager::visibilitySelected, this, [&]{ m_toolGroup->actions().at(30); });
 }
 
 void MainWindow::updateColorIcon(const QColor& c) {

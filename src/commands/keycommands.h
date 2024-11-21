@@ -1,10 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef KEYCOMMANDS_H
 #define KEYCOMMANDS_H
 
@@ -33,7 +26,7 @@ class AddKeyCommand : public QUndoCommand {
 
 class AddBreakdownCommand : public QUndoCommand {
    public:
-    AddBreakdownCommand(Editor* editor, int layer, int prevFrame, int breakdownFrame, float alpha, QUndoCommand* parent = nullptr);
+    AddBreakdownCommand(Editor* editor, int layer, int prevFrame, int breakdownFrame, qreal alpha, QUndoCommand* parent = nullptr);
     ~AddBreakdownCommand() override;
 
     void undo() override;
@@ -46,6 +39,26 @@ class AddBreakdownCommand : public QUndoCommand {
     int m_breakdownFrame;
     float m_alpha;
     VectorKeyFrame *m_prevFrameCopy;
+};
+
+class PasteKeysCommand : public QUndoCommand{
+    public:
+        PasteKeysCommand(Editor * editor, int layer, int frame, float pivotTranslationFactor = 1., QUndoCommand * parent = nullptr);
+        ~PasteKeysCommand() override;
+
+        void undo() override;
+        void redo() override;
+
+    private:
+        Editor * m_editor;
+        QVector<int> m_newKeyFramesIdx;
+        QVector<int> m_selectedKeyFramesIdx;
+        int m_offset;
+        int m_lastFrame;
+        int m_layerIndex;
+        int m_frame;
+        float m_pivotTranslationFactor;
+        Point::VectorType m_toPivot;
 };
 
 class RemoveKeyCommand : public QUndoCommand {

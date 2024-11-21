@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   version="1.1"
+   width="22"
+   height="22"
+   id="svg6190"
+   inkscape:version="1.2.2 (732a01da63, 2022-12-09, custom)"
+   sodipodi:docname="dark_mask.svg"
+   inkscape:export-filename="../light_animation_play.png"
+   inkscape:export-xdpi="90"
+   inkscape:export-ydpi="90"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <sodipodi:namedview
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1"
+     objecttolerance="10"
+     gridtolerance="10"
+     guidetolerance="10"
+     inkscape:pageopacity="0"
+     inkscape:pageshadow="2"
+     inkscape:window-width="1920"
+     inkscape:window-height="1136"
+     id="namedview4440"
+     showgrid="true"
+     inkscape:zoom="30.341309"
+     inkscape:cx="9.426093"
+     inkscape:cy="14.023785"
+     inkscape:window-x="0"
+     inkscape:window-y="27"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg6190"
+     inkscape:snap-bbox="true"
+     inkscape:snap-bbox-edge-midpoints="true"
+     inkscape:showpageshadow="2"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1">
+    <inkscape:grid
+       type="xygrid"
+       id="grid3250" />
+  </sodipodi:namedview>
+  <metadata
+     id="metadata6196">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <defs
+     id="defs6194">
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath3510">
+      <path
+         id="path3512"
+         style="display:block;fill:#d0b0ca;fill-opacity:0.997305;stroke-width:4.73575;stroke-linecap:round;stroke-linejoin:round;stroke-dashoffset:1.8943"
+         d="m 15,1041.3622 a 4,3.9999826 0 0 1 -4,4 4,3.9999826 0 0 1 -4,-4 4,3.9999826 0 0 1 4,-4 4,3.9999826 0 0 1 4,4 z" />
+    </clipPath>
+    <inkscape:path-effect
+       effect="powerclip"
+       id="path-effect3514"
+       is_visible="true"
+       lpeversion="1"
+       inverse="true"
+       flatten="false"
+       hide_clip="false"
+       message="Use fill-rule evenodd on &lt;b&gt;fill and stroke&lt;/b&gt; dialog if no flatten result after convert clip to paths." />
+  </defs>
+  <path
+     id="rect936"
+     clip-path="none"
+     style="fill:#373737;fill-opacity:1;stroke-width:4.59436;stroke-linecap:round;stroke-linejoin:round;stroke-dashoffset:1.8943"
+     d="M 5.824219,3 C 4.2599743,3 3,4.26 3,5.8242 V 16.1758 C 3,17.74 4.2599743,19 5.824219,19 H 16.175781 C 17.740026,19 19,17.74 19,16.1758 V 5.8242 C 19,4.26 17.740026,3 16.175781,3 Z M 11,7 a 4,3.9999826 0 0 1 4,4 4,3.9999826 0 0 1 -4,4 4,3.9999826 0 0 1 -4,-4 4,3.9999826 0 0 1 4,-4 z" />
+</svg>

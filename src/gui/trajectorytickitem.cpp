@@ -1,10 +1,4 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
-#include "trajectorytickitem.h"
+ #include "trajectorytickitem.h"
 
 #include "trajectory.h"
 #include "group.h"
@@ -15,12 +9,12 @@
 #include <QVector2D>
 #include <QPointF>
 
-TrajectoryTickItem::TrajectoryTickItem(Trajectory *traj, float linearAlpha, int idx) : QGraphicsRectItem(), m_traj(traj), m_linearAlpha(linearAlpha), m_idx(idx) {
+TrajectoryTickItem::TrajectoryTickItem(Trajectory *traj, qreal linearAlpha, int idx) : QGraphicsRectItem(), m_traj(traj), m_linearAlpha(linearAlpha), m_idx(idx) {
     updatePos();
 }
 
 void TrajectoryTickItem::updatePos() {
-    float alpha = m_traj->group()->spacingAlpha(m_linearAlpha);
+    qreal alpha = m_traj->group()->spacingAlpha(m_linearAlpha);
     m_pos = m_traj->eval(alpha);
     setRect(m_pos.x() - 2, m_pos.y() - 2, 4, 4);
 }

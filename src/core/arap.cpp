@@ -1,11 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2017 Claude Cugerone
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "arap.h"
 #include "lattice.h"
 #include "layer.h"
@@ -56,9 +48,10 @@ void Arap::regularizeQuad(QuadPtr q, PosTypeIndex dstPos) {
     R << r1, r2, -r2, r1;
     Point::VectorType t = q->biasedCentroid(dstPos) - R * q->biasedCentroid(INTERP_POS);
 
+
     // Transform corners and average
     for (int i = 0; i < 4; i++) {
-        q->corners[i]->coord(DEFORM_POS) += (R * q->corners[i]->coord(INTERP_POS) + t) / double(q->corners[i]->nbQuads());
+        q->corners[i]->coord(DEFORM_POS) += ((R * q->corners[i]->coord(INTERP_POS) + t)) / double(q->corners[i]->nbQuads());
     }
 
     // Update centroids position
@@ -69,10 +62,14 @@ void Arap::regularizeQuad(QuadPtr q, PosTypeIndex dstPos) {
  * Apply regularization on all quads, store the resulting position in dstPos.
  * Returns the maximum corner displacement (squared L2 norm)
  */
-double Arap::regularizeQuads(Lattice &lattice, PosTypeIndex dstPos) {
+double Arap::regularizeQuads(Lattice &lattice, PosTypeIndex dstPos, bool forcePinPos) {
     // Compute ARAP deformation and average
-    for (QuadPtr q : lattice.hash()) {
+    for (QuadPtr q : lattice.quads()) {
         regularizeQuad(q, dstPos);
+    }
+
+    if (forcePinPos) {
+        lattice.displacePinsQuads(DEFORM_POS);
     }
 
     // Update positions and keep track of max displacement
@@ -100,21 +97,24 @@ double Arap::regularizeQuads(Lattice &lattice, PosTypeIndex dstPos) {
  * @param maxIterations     Maximum nb of iterations
  * @param allGrid           Regularize all the quads (override the deformable flag)
  * @param convergenceStop   Stops the iterative process when the maximum corner displacement falls under an hardcoded threshold. Otherwise run #maxIterations
+ * @param forcePinPos       Guarantee that pinned quad contains their pin after regularization
  * @return                  Number of regularization iterations done
  */
-int Arap::regularizeLattice(Lattice &lattice, PosTypeIndex sourcePos, PosTypeIndex dstPos, int maxIterations, bool allGrid, bool convergenceStop) {
+int Arap::regularizeLattice(Lattice &lattice, PosTypeIndex sourcePos, PosTypeIndex dstPos, int maxIterations, bool allGrid, bool convergenceStop, bool forcePinPos) {
     if (maxIterations <= 0) {
         return 0;
     }
 
+    Point::Affine scaling = sourcePos == DEFORM_POS ? Point::Affine::Identity() : lattice.scaling();
+
     // Initialization of interpolated position & source pos
     for (Corner *corner : lattice.corners()) {
-        corner->coord(INTERP_POS) = corner->coord(sourcePos);
-        corner->coord(DEFORM_POS) = Point::VectorType::Zero();
+        corner->coord(INTERP_POS) = scaling * corner->coord(sourcePos); // INTERP store the target position
+        corner->coord(DEFORM_POS) = Point::VectorType::Zero();          // DEFORM store the temporary position (result of the iteration)
         if (allGrid) corner->setDeformable(true);
     }
     // Compute all quad centroids
-    for (QuadPtr q : lattice.hash()) {
+    for (QuadPtr q : lattice.quads()) {
         q->computeCentroids();
     }
 
@@ -122,9 +122,9 @@ int Arap::regularizeLattice(Lattice &lattice, PosTypeIndex sourcePos, PosTypeInd
     double maxDisp = 0;
     int i = 0;
     do {
-        maxDisp = Arap::regularizeQuads(lattice, dstPos);
+        maxDisp = Arap::regularizeQuads(lattice, dstPos, forcePinPos);
         i++;
-    } while (convergenceStop ? (i < maxIterations && sqrt(maxDisp) > 1e-3) : (i < maxIterations));
+    } while (convergenceStop ? (i < maxIterations && sqrt(maxDisp) > 5e-3) : (i < maxIterations));
 
     // Save configuration for plastic deformation
     for (Corner *corner : lattice.corners()) {

@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef __STROKEINTERVAL_H__
 #define __STROKEINTERVAL_H__
 
@@ -11,6 +5,7 @@
 #include <QTransform>
 #include <QList>
 #include <QHash>
+#include <iostream>
 
 #include "point.h"
 
@@ -39,17 +34,27 @@ public:
     inline unsigned int to() const { return m_toId; }
     inline bool canOvershoot() const { return m_canOvershoot; }
     inline int nbPoints() const { return m_toId - m_fromId + 1; }
-    void setOvershoot(bool overshoot) { m_canOvershoot = overshoot; }
+    inline void setTo(int to) { m_toId = to; }
+    inline void setOvershoot(bool overshoot) { m_canOvershoot = overshoot; }
+
+    inline bool connected(const StrokeInterval &other) const {
+        return (m_fromId == other.m_toId + 1) || (other.m_fromId == m_toId + 1);
+    }
 
     inline bool intersects(const StrokeInterval &other) const {
         return BETWEEN_INC(m_fromId, other.m_fromId, other.m_toId) || BETWEEN_INC(m_toId, other.m_fromId, other.m_toId)
             || BETWEEN_INC(other.m_fromId, m_fromId, m_toId)       || BETWEEN_INC(other.m_toId, m_fromId, m_toId);
     }
 
+
     inline void merge(const StrokeInterval &other) { 
         m_fromId = std::min(m_fromId, other.m_fromId); 
         m_toId = std::max(m_toId, other.m_toId); 
     }
+
+    inline bool compare(const StrokeInterval &other) const { return m_fromId == other.m_fromId && m_toId == other.m_toId; }
+
+    inline bool contains(unsigned int idx) const { return idx >= m_fromId && idx <= m_toId; }
 
 private:
     int m_fromId, m_toId;
@@ -59,13 +64,13 @@ private:
 typedef StrokeInterval Interval;
 // typedef QList<Interval> Intervals;
 
-class Intervals : private QList<Interval> {
+class Intervals : public QList<Interval> {
 public:
 
     void append(const Interval &interval);
     void append(const Intervals &intervals);
-
     void clear() { QList<Interval>::clear(); m_nbPoints = 0; }
+    bool compare(const Intervals &other) const;
 
     const Interval &at(unsigned int idx) const { return QList<Interval>::at(idx); }
     const Interval &front() const { return QList<Interval>::front(); }
@@ -84,6 +89,7 @@ public:
     size_t size() const { return QList<Interval>::size(); }
     bool empty() const { return QList<Interval>::empty(); }
     int nbPoints() const { return m_nbPoints; }
+    bool containsPoint(unsigned int idx) const;
 
 private:
     int m_nbPoints{0};
@@ -91,6 +97,9 @@ private:
 
 class StrokeIntervals : public QHash<unsigned int, Intervals> {
 public:
+    bool compare(const StrokeIntervals &other) const;
+    bool containsPoint(unsigned int strokeId, unsigned int pointIdx) const;
+
     void forEachPoint(const VectorKeyFrame *key, std::function<void(Point *)> func, unsigned int id) const;
     void forEachPoint(const VectorKeyFrame *key, std::function<void(Point *)> func) const;
     void forEachPoint(const VectorKeyFrame *key, std::function<void(Point *, unsigned int sId, unsigned int pId)> func, unsigned int id) const;
@@ -104,6 +113,21 @@ public:
         for (auto it = constBegin(); it != constEnd(); ++it) _nbPoints += it.value().nbPoints();
         return _nbPoints;
     }
+
+    inline int nbIntervals() const {
+        int _nbIntervals = 0;
+        for (auto it = constBegin(); it != constEnd(); ++it) _nbIntervals += it.value().size();
+        return _nbIntervals;
+    }
+
+    inline void debug() const {
+        for (auto it = constBegin(); it != constEnd(); ++it) {
+            std::cout << "Stroke " << it.key() << ":" << std::endl;
+            for (const Interval &interval : it.value()) {
+                std::cout << "    - [" << interval.from() << ", " << interval.to() << "]" << std::endl;
+            }
+        }
+    }
 };
 
-#endif // __STROKEINTERVAL_H__m_uvs
+#endif // __STROKEINTERVAL_H__

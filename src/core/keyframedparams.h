@@ -1,11 +1,11 @@
-/*
- * SPDX-FileCopyrightText: 2013 Romain Vergne <romain.vergne@inria.fr>
- * SPDX-FileCopyrightText: 2020-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: MPL-2.0
- */
+// This file is part of Gratin, a node-based compositing software
+// for 2D and 3D animations.
+//
+// Copyright (C) 2013 Romain Vergne <romain.vergne@inria.fr>
+//
+// This Source Code Form is subject to the terms of the Mozilla
+// Public License v. 2.0. If a copy of the MPL was not distributed
+// with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #ifndef KEYFRAMED_PARAMS
 #define KEYFRAMED_PARAMS
@@ -37,14 +37,14 @@ class KeyframedVar {
     }
     void setInterpolation(QString nodeName, int interpolation);
     void resetTangent();
-    void scaleTangentVertical(float factor);
+    void scaleTangentVertical(double factor);
     inline virtual QString curveName(unsigned int i = 0) const { return QString::number(i); }
 
     virtual void moveKeys(QString nodeName, int offsetFirst, int offsetLast) = 0;
-    virtual void removeKeyBefore(QString nodeName, float atFrame) = 0;
-    virtual void removeKeyAfter(QString nodeName, float atFrame) = 0;
+    virtual void removeKeyBefore(QString nodeName, double atFrame) = 0;
+    virtual void removeKeyAfter(QString nodeName, double atFrame) = 0;
     virtual void removeKeys(QString nodeName) = 0;
-    virtual int addKey(QString nodeName, float atFrame) = 0;
+    virtual int addKey(QString nodeName, double atFrame) = 0;
     virtual void normalizeX();
     inline virtual void removeLastPoint() {
         for (size_t i = 0; i < nbCurves(); i++) _curves[i]->removeLastPoint();
@@ -62,18 +62,18 @@ class KeyframedVar {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
-class KeyframedFloat : public KeyframedVar {
+class KeyframedReal : public KeyframedVar {
    public:
-    KeyframedFloat(const QString &name, float minVal = 0.0f, float maxVal = 1.0f, float defaultVal = 0.0f);
-    KeyframedFloat(const KeyframedFloat &other, int i, int j);
+    KeyframedReal(const QString &name, double minVal = 0.0, double maxVal = 1.0, double defaultVal = 0.0);
+    KeyframedReal(const KeyframedReal &other, int i, int j);
 
     QString name() { return _name; }
 
-    inline float get() const { return _currentVal; }
-    inline void set(float v) { _currentVal = v; };
+    inline double get() const { return _currentVal; }
+    inline void set(double v) { _currentVal = v; };
 
-    inline bool frameChanged(float x) {
-        const float tmp = curve()->evalAt(x);
+    inline bool frameChanged(double x) {
+        const double tmp = curve()->evalAt(x);
         // report that the new frame did not change the current variable
         if (_currentVal == tmp) return false;
         _currentVal = tmp;
@@ -81,18 +81,18 @@ class KeyframedFloat : public KeyframedVar {
     }
 
     virtual void moveKeys(QString nodeName, int offsetFirst, int offsetLast);
-    virtual void removeKeyBefore(QString nodeName, float atFrame);
-    virtual void removeKeyAfter(QString nodeName, float atFrame);
+    virtual void removeKeyBefore(QString nodeName, double atFrame);
+    virtual void removeKeyAfter(QString nodeName, double atFrame);
     virtual void removeKeys(QString nodeName);
-    virtual int addKey(QString nodeName, float atFrame);
+    virtual int addKey(QString nodeName, double atFrame);
 
     void save(QDomDocument &doc, QDomElement &transformation) const;
     void load(QDomElement &transformation);
 
    private:
-    float _minVal;
-    float _maxVal;
-    float _currentVal;
+    double _minVal;
+    double _maxVal;
+    double _currentVal;
 
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -110,7 +110,7 @@ class KeyframedVector : public KeyframedVar {
     inline Point::VectorType getDerivative() const { return _currentDer; } 
     inline void set(const Point::VectorType &v) { _currentVal = v; }
 
-    inline bool frameChanged(float x) {
+    inline bool frameChanged(double x) {
         const Point::VectorType tmp(curve(0)->evalAt(x), curve(1)->evalAt(x));
         const Point::VectorType tmpDer(curve(0)->evalDerivativeAt(x), curve(1)->evalDerivativeAt(x));
         // report that the new frame did not change the current variable
@@ -121,11 +121,11 @@ class KeyframedVector : public KeyframedVar {
     }
 
     virtual void moveKeys(QString nodeName, int offsetFirst, int offsetLast);
-    virtual void removeKeyBefore(QString nodeName, float atFrame);
-    virtual void removeKeyAfter(QString nodeName, float atFrame);
+    virtual void removeKeyBefore(QString nodeName, double atFrame);
+    virtual void removeKeyAfter(QString nodeName, double atFrame);
     virtual void removeKeys(QString nodeName);
-    virtual int addKey(QString nodeName, float atFrame);
-    void keys(std::vector<float> &keys);
+    virtual int addKey(QString nodeName, double atFrame);
+    void keys(std::vector<double> &keys);
 
     void save(QDomDocument &doc, QDomElement &transformation) const;
     void load(QDomElement &transformation);
@@ -156,7 +156,7 @@ class KeyframedTransform {
     KeyframedTransform(QString nodeName)
         : translation(KeyframedVector("Translation")),
           scaling(KeyframedVector("Scaling", Point::VectorType(1, 1))),
-          rotation(KeyframedFloat("Rotation", -MAXRANGE, MAXRANGE, 0.0)),
+          rotation(KeyframedReal("Rotation", -MAXRANGE, MAXRANGE, 0.0)),
           m_nodeName(nodeName) {
         translation.setInterpolation(m_nodeName, Curve::HERMITE_INTERP);
         scaling.setInterpolation(m_nodeName, Curve::HERMITE_INTERP);
@@ -166,16 +166,16 @@ class KeyframedTransform {
     KeyframedTransform(const KeyframedTransform &other, int i, int j)
         : translation(KeyframedVector(other.translation, i, j)),
           scaling(KeyframedVector(other.scaling, i, j)),
-          rotation(KeyframedFloat(other.rotation, i, j)),
+          rotation(KeyframedReal(other.rotation, i, j)),
           m_nodeName(other.m_nodeName) {}
 
-    inline void frameChanged(float time) {
+    inline void frameChanged(double time) {
         translation.frameChanged(time);
         scaling.frameChanged(time);
         rotation.frameChanged(time);
     }
 
-    inline int addKeys(float atFrame = -1) {
+    inline int addKeys(double atFrame = -1) {
         translation.addKey(m_nodeName, atFrame);
         scaling.addKey(m_nodeName, atFrame);
         return rotation.addKey(m_nodeName, atFrame);
@@ -187,13 +187,13 @@ class KeyframedTransform {
         rotation.moveKeys(m_nodeName, offsetFirst, offsetLast);
     }
 
-    inline void setAt(float frame) {
+    inline void setAt(double frame) {
         translation.set(Point::VectorType(translation.curve(0)->evalAt(frame), translation.curve(1)->evalAt(frame)));
         scaling.set(Point::VectorType(scaling.curve(0)->evalAt(frame), scaling.curve(1)->evalAt(frame)));
         rotation.set(rotation.curve()->evalAt(frame));
     }
 
-    inline void removeKeyAfter(float atFrame) {
+    inline void removeKeyAfter(double atFrame) {
         translation.removeKeyAfter(m_nodeName, atFrame);
         scaling.removeKeyAfter(m_nodeName, atFrame);
         rotation.removeKeyAfter(m_nodeName, atFrame);
@@ -211,7 +211,7 @@ class KeyframedTransform {
         rotation.resetTangent();
     }
 
-    inline void scaleTangentVertical(float factor = 1.0f) {
+    inline void scaleTangentVertical(double factor = 1.0) {
         translation.scaleTangentVertical(factor);
         scaling.scaleTangentVertical(factor);
         rotation.scaleTangentVertical(factor);
@@ -220,9 +220,9 @@ class KeyframedTransform {
     // split the KeyframedTransform at the given time and returns the second half
     // the KeyframedTransformed is truncated to be the first half
     // if scale is true then both have are normalized
-    KeyframedTransform *split(float time, bool scale=true);
+    KeyframedTransform *split(double time, bool scale=true);
 
-    void keys(std::set<float> &keys);
+    void keys(std::set<double> &keys);
 
     void save(QDomDocument &doc, QDomElement &transformation) const;
     void load(QDomElement &transformation);
@@ -235,7 +235,7 @@ class KeyframedTransform {
 
     KeyframedVector translation;
     KeyframedVector scaling;
-    KeyframedFloat rotation;
+    KeyframedReal rotation;
 
    private:
     // KeyFrame *_keyFrame;

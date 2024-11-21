@@ -1,11 +1,11 @@
-/*
- * SPDX-FileCopyrightText: 2013 Romain Vergne <romain.vergne@inria.fr>
- * SPDX-FileCopyrightText: 2020-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: MPL-2.0
- */
+// This file is part of Gratin, a node-based compositing software
+// for 2D and 3D animations.
+//
+// Copyright (C) 2013 Romain Vergne <romain.vergne@inria.fr>
+//
+// This Source Code Form is subject to the terms of the Mozilla
+// Public License v. 2.0. If a copy of the MPL was not distributed
+// with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "keyframedparams.h"
 #include "animationcurve.h"
@@ -43,7 +43,7 @@ void KeyframedVar::resetTangent() {
     for (Curve *curve : _curves) curve->setPiecewiseLinear();
 }
 
-void KeyframedVar::scaleTangentVertical(float factor) {
+void KeyframedVar::scaleTangentVertical(double factor) {
     for (Curve *curve : _curves) curve->scaleTangentVertical(factor);
 }
 
@@ -60,39 +60,39 @@ void KeyframedVar::print(std::ostream &os) {
     } 
 }
 
-KeyframedFloat::KeyframedFloat(const QString &name, float minVal, float maxVal, float defaultVal)
+KeyframedReal::KeyframedReal(const QString &name, double minVal, double maxVal, double defaultVal)
     : KeyframedVar(name), _minVal(minVal), _maxVal(maxVal), _currentVal(defaultVal) {
-    _curves.push_back(new Curve(Eigen::Vector2f(1.0f, _currentVal)));
+    _curves.push_back(new Curve(Eigen::Vector2d(1.0, _currentVal)));
 }
 
-KeyframedFloat::KeyframedFloat(const KeyframedFloat &other, int i, int j)
+KeyframedReal::KeyframedReal(const KeyframedReal &other, int i, int j)
     : KeyframedVar(other, i, j), _minVal(other._minVal), _maxVal(other._maxVal), _currentVal(other._currentVal) {}
 
 
-void KeyframedFloat::moveKeys(QString nodeName, int offsetFirst, int offsetLast) {
+void KeyframedReal::moveKeys(QString nodeName, int offsetFirst, int offsetLast) {
     curve()->moveKeys(offsetFirst, offsetLast);
 }
 
-void KeyframedFloat::removeKeyBefore(QString nodeName, float atFrame) {
+void KeyframedReal::removeKeyBefore(QString nodeName, double atFrame) {
     curve()->removeKeyframeBefore(atFrame);
 }
 
-void KeyframedFloat::removeKeyAfter(QString nodeName, float atFrame) {
+void KeyframedReal::removeKeyAfter(QString nodeName, double atFrame) {
     curve()->removeKeyframeAfter(atFrame);
 }
 
-void KeyframedFloat::removeKeys(QString nodeName) {
+void KeyframedReal::removeKeys(QString nodeName) {
     curve()->removeKeys();
 }
 
-int KeyframedFloat::addKey(QString nodeName, float atFrame) {
-    float current = atFrame;
+int KeyframedReal::addKey(QString nodeName, double atFrame) {
+    double current = atFrame;
     set(_currentVal);
-    int idx = curve()->addKeyframe(Eigen::Vector2f(current, get()));
+    int idx = curve()->addKeyframe(Eigen::Vector2d(current, get()));
     return idx;
 }
 
-void KeyframedFloat::save(QDomDocument &doc, QDomElement &transformation) const {
+void KeyframedReal::save(QDomDocument &doc, QDomElement &transformation) const {
     transformation.setAttribute("interpType", curve()->interpType());
     QDomElement interp_points = doc.createElement("interp_points");
     QDomElement interp_tangents = doc.createElement("interp_tangents");
@@ -134,7 +134,7 @@ void KeyframedFloat::save(QDomDocument &doc, QDomElement &transformation) const 
     }
 }
 
-void KeyframedFloat::load(QDomElement &transformation) {
+void KeyframedReal::load(QDomElement &transformation) {
     removeKeys(name());
     curve()->setInterpolation(transformation.attribute("interpType").toInt());
 
@@ -143,25 +143,25 @@ void KeyframedFloat::load(QDomElement &transformation) {
 
     QString string = domPoints.text();
     QTextStream stream(&string);
-    float x, y;
+    double x, y;
     for (int i = 0; i < domPoints.attribute("size").toInt(); ++i) {
         stream >> x >> y;
-        curve()->addKeyframe(Eigen::Vector2f(x, y));
+        curve()->addKeyframe(Eigen::Vector2d(x, y));
     }
 
     string = domTangents.text();
     stream.setString(&string);
     for (int i = 0; i < domTangents.attribute("size").toInt(); ++i) {
-        float x1, y1, x2, y2;
+        double x1, y1, x2, y2;
         stream >> x1 >> y1 >> x2 >> y2;
-        curve()->setTangent(Eigen::Vector4f(x1, y1, x2, y2), i);
+        curve()->setTangent(Eigen::Vector4d(x1, y1, x2, y2), i);
     }
 
     if (curve()->interpType() == Curve::MONOTONIC_CUBIC_INTERP) {
         QDomElement domGradients = domTangents.nextSiblingElement();
         string = domGradients.text();
         stream.setString(&string);
-        float g = 0.0f;
+        double g = 0.0;
         CubicMonotonicInterpolator *interp = dynamic_cast<CubicMonotonicInterpolator *>(curve()->interpolator());
         for (int i = 0; i < domGradients.attribute("size").toInt(); ++i) {
             stream >> g;
@@ -173,8 +173,8 @@ void KeyframedFloat::load(QDomElement &transformation) {
 KeyframedVector::KeyframedVector(const KeyframedVector &other, int i, int j) : KeyframedVar(other, i, j), _currentVal(other._currentVal) {}
 
 KeyframedVector::KeyframedVector(const QString &name, const Point::VectorType &defaultVal) : KeyframedVar(name), _currentVal(defaultVal) {
-    _curves.push_back(new Curve(Eigen::Vector2f(1.0f, _currentVal[0])));
-    _curves.push_back(new Curve(Eigen::Vector2f(1.0f, _currentVal[1])));
+    _curves.push_back(new Curve(Eigen::Vector2d(1.0, _currentVal[0])));
+    _curves.push_back(new Curve(Eigen::Vector2d(1.0, _currentVal[1])));
 }
 
 void KeyframedVector::moveKeys(QString nodeName, int offsetFirst, int offsetLast) {
@@ -182,12 +182,12 @@ void KeyframedVector::moveKeys(QString nodeName, int offsetFirst, int offsetLast
     curve(1)->moveKeys(offsetFirst, offsetLast);
 }
 
-void KeyframedVector::removeKeyBefore(QString nodeName, float atFrame) {
+void KeyframedVector::removeKeyBefore(QString nodeName, double atFrame) {
     curve(0)->removeKeyframeBefore(atFrame);
     curve(1)->removeKeyframeBefore(atFrame);
 }
 
-void KeyframedVector::removeKeyAfter(QString nodeName, float atFrame) {
+void KeyframedVector::removeKeyAfter(QString nodeName, double atFrame) {
     curve(0)->removeKeyframeAfter(atFrame);
     curve(1)->removeKeyframeAfter(atFrame);
 }
@@ -197,14 +197,14 @@ void KeyframedVector::removeKeys(QString nodeName) {
     curve(1)->removeKeys();
 }
 
-int KeyframedVector::addKey(QString nodeName, float atFrame) {
+int KeyframedVector::addKey(QString nodeName, double atFrame) {
     set(_currentVal);
-    int idx = curve(0)->addKeyframe(Eigen::Vector2f(atFrame, get()[0]));
-    curve(1)->addKeyframe(Eigen::Vector2f(atFrame, get()[1]));
+    int idx = curve(0)->addKeyframe(Eigen::Vector2d(atFrame, get()[0]));
+    curve(1)->addKeyframe(Eigen::Vector2d(atFrame, get()[1]));
     return idx;
 }
 
-void KeyframedVector::keys(std::vector<float> &keys) {
+void KeyframedVector::keys(std::vector<double> &keys) {
     assert(curve(0)->nbPoints() == curve(1)->nbPoints());
     for (size_t i = 0; i < curve(0)->nbPoints(); i++) {
         keys.push_back(curve(0)->point(i).x());
@@ -256,23 +256,23 @@ void KeyframedVector::load(QDomElement &transformation) {
 
         QString string = domPoints.text();
         QTextStream stream(&string);
-        float x, y;
+        double x, y;
         for (int i = 0; i < domPoints.attribute("size").toInt(); ++i) {
             stream >> x >> y;
-            curve(c)->addKeyframe(Eigen::Vector2f(x, y));
+            curve(c)->addKeyframe(Eigen::Vector2d(x, y));
         }
 
         string = domTangents.text();
         stream.setString(&string);
         for (int i = 0; i < domTangents.attribute("size").toInt(); ++i) {
-            float x1, y1, x2, y2;
+            double x1, y1, x2, y2;
             stream >> x1 >> y1 >> x2 >> y2;
-            curve(c)->setTangent(Eigen::Vector4f(x1, y1, x2, y2), i);
+            curve(c)->setTangent(Eigen::Vector4d(x1, y1, x2, y2), i);
         }
     }
 }
 
-KeyframedTransform *KeyframedTransform::split(float time, bool scale) {
+KeyframedTransform *KeyframedTransform::split(double time, bool scale) {
     frameChanged(time);
     int idx = addKeys(time);
     int nbPoints = translation.curve()->nbPoints();
@@ -289,14 +289,14 @@ KeyframedTransform *KeyframedTransform::split(float time, bool scale) {
     // rescale y component for the second half of the curve (since it represents a relative value)
     // reminder: all curves in the transform have the same number of keys (i.e control points) and they are
     // all synchronized in time (x component)
-    secondHalf->frameChanged(0.0f);
-    float currentRotation, rotationOffset = secondHalf->rotation.get();
+    secondHalf->frameChanged(0.0);
+    double currentRotation, rotationOffset = secondHalf->rotation.get();
     Point::VectorType currentTranslation, currentScaling, 
                       translationOffset = secondHalf->translation.get(), 
                       scalingOffset = secondHalf->scaling.get();
                       
     for (int i = 0; i < nbPointsSecondHalf; ++i) {
-        float x = secondHalf->translation.curve()->point(i)[0];
+        double x = secondHalf->translation.curve()->point(i)[0];
 
         secondHalf->translation.frameChanged(x);
         secondHalf->rotation.frameChanged(x);
@@ -306,9 +306,9 @@ KeyframedTransform *KeyframedTransform::split(float time, bool scale) {
         currentRotation = secondHalf->rotation.get() - rotationOffset;
         currentScaling = secondHalf->scaling.get() - scalingOffset + Point::VectorType::Ones();
 
-        secondHalf->translation.set(x == 0.0f ? Point::VectorType::Zero() : currentTranslation);
-        secondHalf->rotation.set(x == 0.0f ? 0.0f : currentRotation);
-        secondHalf->scaling.set(x == 0.0f ? Point::VectorType::Ones() : currentScaling);
+        secondHalf->translation.set(x == 0.0 ? Point::VectorType::Zero() : currentTranslation);
+        secondHalf->rotation.set(x == 0.0 ? 0.0 : currentRotation);
+        secondHalf->scaling.set(x == 0.0 ? Point::VectorType::Ones() : currentScaling);
 
         secondHalf->addKeys(x);
     }
@@ -316,7 +316,7 @@ KeyframedTransform *KeyframedTransform::split(float time, bool scale) {
     return secondHalf;
 }
 
-void KeyframedTransform::keys(std::set<float> &keys) {
+void KeyframedTransform::keys(std::set<double> &keys) {
     auto addVarKeys = [&keys](KeyframedVar *var) {
         for (size_t i = 0; i < var->nbCurves(); i++) {
             Curve *curve = var->curve(i);

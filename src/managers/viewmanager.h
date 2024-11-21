@@ -1,13 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2012-2014 Matthew Chiawen Chang
- * SPDX-FileCopyrightText: 2018-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
-
 #ifndef VIEWMANAGER_H
 #define VIEWMANAGER_H
 
@@ -63,6 +53,8 @@ public slots:
     void rotateCounterClockwise() { rotate(-15); }
     void resetRotate();
 
+    void setDevicePixelRatio(qreal ratio);
+
 signals:
     void viewChanged();
 
@@ -73,6 +65,8 @@ private:
     void createViewTransform();
 
     QTransform m_view;
+
+    qreal m_devicePixelRatio;
 
     QPointF m_translate;
     qreal m_rotate = 0.f;

@@ -1,16 +1,10 @@
-/*
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "quad.h"
 
 #include "corner.h"
 
 void Quad::clear() {
-    m_elements.clear();
+    m_forwardStrokes.clear();
+    m_backwardStrokes.clear();
     for (int i = 0; i < 4; ++i) {
         m_centroid[i] = Point::VectorType::Zero();
         corners[i] = nullptr;
@@ -21,11 +15,16 @@ void Quad::clear() {
  * Remove a stroke embedding
  */
 void Quad::removeStroke(int strokeId) {
-    QMutableHashIterator<unsigned int, Intervals> it(m_elements);
-    while (it.hasNext()) {
-        it.next();
-        if (it.key() == strokeId) it.remove();
+    m_forwardStrokes.remove(strokeId);
+    m_backwardStrokes.remove(strokeId);
+}
+
+double Quad::averageEdgeLength(PosTypeIndex pos) const {
+    double tot = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        tot += (corners[(i + 1) % 4]->coord(pos) - corners[i]->coord(pos)).norm();
     }
+    return tot * 0.25;
 }
 
 void Quad::pin(const Point::VectorType &uv) {
@@ -33,17 +32,17 @@ void Quad::pin(const Point::VectorType &uv) {
 }
 
 void Quad::pin(const Point::VectorType &uv, const Point::VectorType &pos) {
-    m_pinned = true;
+    m_flags.set(PINNED, true);
     m_pinUV = uv;
     m_pinPosition = pos;
 }
 
 void Quad::unpin() {
-    m_pinned = false;
+    m_flags.set(PINNED, false);
 }
 
 Point::VectorType Quad::biasedCentroid(PosTypeIndex type) const {
-    if (!m_pinned) {
+    if (!m_flags.test(PINNED)) {
         return centroid(type);
     }
 
@@ -118,7 +117,7 @@ Point::Affine Quad::optimalRigidTransform(PosTypeIndex source, PosTypeIndex targ
 }
 
 /**
- * Returns the optimal affine transformation (translation + rotation) between the source and target positions
+ * Returns the optimal affine transformation between the source and target positions
 */
 Point::Affine Quad::optimalAffineTransform(PosTypeIndex source, PosTypeIndex target) {
     computeCentroids();
@@ -134,5 +133,33 @@ Point::Affine Quad::optimalAffineTransform(PosTypeIndex source, PosTypeIndex tar
     }
     Eigen::Matrix2d R = QiPi * PiPi.inverse();
     Point::VectorType t = biasedCentroid(target) - R * biasedCentroid(source);
+    return Point::Affine(Point::Translation(t) * Point::Rotation(R));   
+}
+
+/**
+ * Returns the optimal affine transformation between the original quad location (axis-aligned) and the target quad position
+ */
+Point::Affine Quad::optimalAffineTransformFromOriginalQuad(int x, int y, int cellSize, Eigen::Vector2i origin, PosTypeIndex target) {
+    Point::VectorType positions[4] = {Point::VectorType(x, y), Point::VectorType(x + 1, y), Point::VectorType(x + 1, y + 1), Point::VectorType(x, y + 1)};
+    Point::VectorType originalPositions[4];
+    Point::VectorType centroid = Point::VectorType::Zero();
+    for (int i = 0; i < 4; ++i) {
+        originalPositions[i] = cellSize * positions[i] + Point::VectorType(origin.x(), origin.y());
+        centroid += originalPositions[i];
+    }
+
+    computeCentroid(target);
+    Eigen::Matrix2d PiPi, QiPi;
+    PiPi.setZero();
+    QiPi.setZero();
+    for (int i = 0; i < 4; i++) {
+        Corner *c = corners[i];
+        Point::VectorType pi = originalPositions[i] - centroid;
+        Point::VectorType qi = c->coord(target) - biasedCentroid(target);
+        PiPi += (pi * pi.transpose());
+        QiPi += (qi * pi.transpose());
+    }
+    Eigen::Matrix2d R = QiPi * PiPi.inverse();
+    Point::VectorType t = biasedCentroid(target) - R * centroid;
     return Point::Affine(Point::Translation(t) * Point::Rotation(R));   
 }

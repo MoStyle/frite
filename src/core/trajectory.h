@@ -1,15 +1,9 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef __TRAJECTORY_H__
 #define __TRAJECTORY_H__
 
 #include "keyframedparams.h"
 #include "uvhash.h"
-#include "cubic.h"
+#include "bezier2D.h"
 #include <QPainterPath>
 #include <QPainter>
 #include <memory.h>
@@ -47,7 +41,8 @@ public:
     void adjustLocalOffsetFromContuinityConstraint();
     void resetLocalOffset();
 
-    Point::VectorType eval(float t) { return m_fitArap ? m_cubicApprox.eval(t) : m_cubicApprox.evalArcLength(t); }
+    Point::VectorType eval(double t) { return m_fitArap ? m_cubicApprox.eval(t) : m_cubicApprox.evalArcLength(t); }
+    Point::VectorType evalVelocity(double t) { return m_fitArap ? m_cubicApprox.evalDer(t) : m_cubicApprox.evalDerArcLength(t); }
     Point::VectorType key(size_t i);
     Point::VectorType keyTangent(size_t i, unsigned int side);
 
@@ -57,7 +52,7 @@ public:
     const UVInfo &latticeCoord() const { return m_latticeCoord; }
     KeyframedVector *curve() const { return m_curve.get(); }
     const Bezier2D &cubicApprox() const { return m_cubicApprox; }
-    KeyframedFloat *localOffset() const { return m_offset.get(); }
+    KeyframedReal *localOffset() const { return m_offset.get(); }
     unsigned int constraintID() const { return m_constraintID; }
     bool hardConstraint() const { return m_hardConstraint; }
     const std::shared_ptr<Trajectory> &nextTrajectory() const { return m_nextTrajectory; }
@@ -88,7 +83,7 @@ private:
 
     std::unique_ptr<KeyframedVector> m_curve;       // animation curve of the trajectory (DEPRECATED!)
     Bezier2D m_cubicApprox;                         // cubic bezier segment approximating the trajectory
-    std::unique_ptr<KeyframedFloat> m_offset;       // local spacing offset
+    std::unique_ptr<KeyframedReal> m_offset;       // local spacing offset
     unsigned int m_constraintID;                    // id of the constraint in the lattice (only if this is a hard constraint)
     bool m_hardConstraint;                          // whether or not this trajectory is a hard constraint
     bool m_fitArap;                                 // special case when the cubic bezier approximate the resut of an arap interpolation

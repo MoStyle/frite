@@ -1,10 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef LAYERCOMMANDS_H
 #define LAYERCOMMANDS_H
 
@@ -102,5 +95,20 @@ private:
   LayerManager *m_layerManager;
   int m_layerIndex;
 };
+
+class SwitchHasMaskCommand : public QUndoCommand {
+public:
+  SwitchHasMaskCommand(LayerManager *layerManager, int layer,
+                       QUndoCommand *parent = nullptr);
+  ~SwitchHasMaskCommand() override;
+
+  void undo() override;
+  void redo() override;
+
+private:
+  LayerManager *m_layerManager;
+  int m_layerIndex;
+};
+
 
 #endif // LAYERCOMMANDS_H

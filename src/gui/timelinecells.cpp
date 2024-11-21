@@ -1,13 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2012-2014 Matthew Chiawen Chang
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
-
 #include "timelinecells.h"
 #include "timeline.h"
 #include "layer.h"
@@ -23,7 +13,7 @@
 
 
 TimeLineCells::TimeLineCells(TimeLine* parent, Editor* editor, TimeLineCellsTypes type)
-    : QWidget(parent), timeLine(parent), m_editor(editor), type(type), m_isChangingOpacity(false)
+    : QWidget(parent), timeLine(parent), m_editor(editor), type(type), m_isChangingOpacity(false), m_selectionBox(QRubberBand::Rectangle, this)
 {
     cache = nullptr;
     QSettings settings("manao","Frite");
@@ -102,6 +92,24 @@ int TimeLineCells::getLayerY(int layerNumber)
     return offsetY + (m_editor->layers()->layersCount()-1-layerNumber-layerOffset)*layerHeight;
 }
 
+bool TimeLineCells::selectionContainsVectorKeyFrame(int frame){
+    if (!m_selectionBox.isVisible()) return false;
+    int currentLayer = m_editor->layers()->currentLayerIndex();
+    QRect rect = m_selectionBox.geometry();
+    if (rect.bottomLeft().y() < getLayerY(currentLayer) || rect.topLeft().y() > getLayerY(currentLayer) + getLayerHeight())
+        return false;
+        
+    Layer * layer = m_editor->layers()->layerAt(currentLayer);
+    int frameMin = getFrameNumber(rect.topLeft().x());
+    if (frameMin >= layer->getMaxKeyFramePosition())
+        return false;
+
+    frameMin = layer->getLastKeyFramePosition(frameMin);
+    int frameMax = getFrameNumber(rect.topRight().x());
+    frameMax = layer->getLastKeyFramePosition(frameMax);
+    return frameMin <= frame && frame <= frameMax;
+}
+
 void TimeLineCells::updateFrame(int frameNumber)
 {
     int x = getFrameX(frameNumber);
@@ -176,6 +184,11 @@ void TimeLineCells::drawContent()
         // --- draw onion
         targetRect = QRect(20, 3, 16, 16);
         painter.drawPixmap(targetRect, QPixmap(m_editor->style()->getResourcePath("onionOn")));
+        painter.setRenderHint(QPainter::Antialiasing, false);
+
+        // --- draw mask
+        targetRect = QRect(38, 3, 16, 16);
+        painter.drawPixmap(targetRect, QPixmap(m_editor->style()->getResourcePath("mask")));
         painter.setRenderHint(QPainter::Antialiasing, false);
     }
 
@@ -273,12 +286,21 @@ void TimeLineCells::mousePressEvent(QMouseEvent* event)
     endY = event->pos().y();
     int currentFrameIndex = m_editor->playback()->currentFrame();
 
-    if (type == TYPE_LAYER_ATTR) {
+    if (event->modifiers() & Qt::ControlModifier){
+        int currentLayer = m_editor->layers()->currentLayerIndex();
+        if (!(event->modifiers() & Qt::ShiftModifier))
+            m_editor->layers()->layerAt(currentLayer)->clearSelectedKeyFrame();
+        m_selectionBoxOrigin = event->pos();
+        m_selectionBox.setGeometry(QRect(m_selectionBoxOrigin, m_selectionBoxOrigin));
+        m_selectionBox.show();
+    } else if (type == TYPE_LAYER_ATTR) {
         if (layerNumber >= 0 && layerNumber < m_editor->layers()->layersCount()) {
-            if (event->pos().x() < 15) {
+            if (event->pos().x() < 22) {
                 m_editor->undoStack()->push(new SwitchVisibilityCommand(m_editor->layers(), layerNumber));
-            } else if(event->pos().x() < 30) {
+            } else if(event->pos().x() < 37) {
                 m_editor->undoStack()->push(new SwitchOnionCommand(m_editor->layers(), layerNumber));
+            } else if (event->pos().x() < 55) {
+                m_editor->undoStack()->push(new SwitchHasMaskCommand(m_editor->layers(), layerNumber));
             } else if(event->pos().x() > 150 && event->pos().x() < 185) {
                 m_prevOpacity = qreal(event->pos().x()-150)/35.;
                 m_isChangingOpacity = true;
@@ -287,10 +309,10 @@ void TimeLineCells::mousePressEvent(QMouseEvent* event)
             }
         }
         if (layerNumber == -1) {
-            if (event->pos().x() < 15) {
+            if (event->pos().x() < 22) {
                 for(int l=0; l<m_editor->layers()->layersCount(); l++)
                     m_editor->undoStack()->push(new SwitchVisibilityCommand(m_editor->layers(), l));
-            } else if(event->pos().x() < 30) {
+            } else if(event->pos().x() < 37) {
                 for(int l=0; l<m_editor->layers()->layersCount(); l++)
                     m_editor->undoStack()->push(new SwitchOnionCommand(m_editor->layers(), l));
             }
@@ -312,7 +334,6 @@ void TimeLineCells::mousePressEvent(QMouseEvent* event)
 
                     m_editor->setCurrentLayer(layerNumber);
                 }
-
                 Layer* layer = m_editor->layers()->layerAt(layerNumber);
                 layer->startMoveKeyframe(this, event, frameNumber, getLayerY(layerNumber));
                 updateContent();
@@ -329,6 +350,13 @@ void TimeLineCells::mousePressEvent(QMouseEvent* event)
 
 void TimeLineCells::mouseMoveEvent(QMouseEvent* event)
 {
+    int frameNumber = getFrameNumber(event->pos().x());
+    int layerNumber = getLayerNumber(event->pos().y());
+
+    if (event->modifiers() & Qt::ControlModifier){
+        m_selectionBox.setGeometry(QRect(m_selectionBoxOrigin, event->pos()).normalized());
+    }
+
     if (type == TYPE_LAYER_ATTR) {
         if(m_isChangingOpacity) {
             Layer* layer = m_editor->layers()->layerAt(m_startLayerNumber);
@@ -345,8 +373,8 @@ void TimeLineCells::mouseMoveEvent(QMouseEvent* event)
         }
     }
 
-    int frameNumber = getFrameNumber(event->pos().x());
-    int layerNumber = getLayerNumber(event->pos().y());
+
+
     if (type == TYPE_TRACKS && frameNumber>0) {
         if (timeLine->scrubbing) {
             m_editor->playback()->setPlaying(true);
@@ -362,6 +390,39 @@ void TimeLineCells::mouseMoveEvent(QMouseEvent* event)
 
 void TimeLineCells::mouseReleaseEvent(QMouseEvent* event)
 {
+    if (m_selectionBox.isVisible())
+        m_selectionBox.hide();
+
+    if (event->modifiers() & Qt::ControlModifier){
+        QRect rect = m_selectionBox.geometry();
+        int currentLayer = m_editor->layers()->currentLayerIndex();
+        Layer * layer = m_editor->layers()->layerAt(currentLayer);
+        if (rect.bottomLeft().y() > getLayerY(currentLayer) && rect.topLeft().y() < getLayerY(currentLayer) + getLayerHeight()){
+            int layerMin = layer->getFirstKeyFrameSelected();
+            int layerMax = layer->getLastKeyFrameSelected();
+            int frameMin = getFrameNumber(rect.topLeft().x());
+            int frameMax = getFrameNumber(rect.topRight().x());
+            if (event->modifiers() & Qt::ShiftModifier && !layer->selectedKeyFrameIsEmpty()){
+                if (frameMax < layerMin){
+                    for (int frame = frameMax; frame < layerMin; frame++){
+                        layer->addSelectedKeyFrame(frame);
+                    }
+                }
+                if (frameMin > layerMax){
+                    for(int frame = layerMax; frame < frameMin; frame++){
+                        layer->addSelectedKeyFrame(frame);
+                    }
+                }
+            }
+            for (int x = rect.topLeft().x(); x <= rect.topRight().x(); x += frameSize / 2){
+                layer->addSelectedKeyFrame(getFrameNumber(x));
+            }
+            layer->sortSelectedKeyFrames();
+        }
+        timeLine->update();
+        return;
+    }
+    
     m_editor->playback()->setPlaying(false);
     endY = startY;
     emit mouseMovedY(0);
@@ -399,6 +460,12 @@ void TimeLineCells::mouseDoubleClickEvent(QMouseEvent* event)
         return;
     Layer* layer = m_editor->layers()->layerAt(layerNumber);
 
+    if (event->modifiers() & Qt::ControlModifier){
+        layer->clearSelectedKeyFrame();
+        timeLine->updateContent();
+        return;
+    }
+
     // -- layer --
     if(type == TYPE_LAYER_ATTR && event->pos().x() >= 15) {
         bool ok;
@@ -419,11 +486,24 @@ void TimeLineCells::contextMenuEvent(QContextMenuEvent *event)
             return;
         Layer* layer = m_editor->layers()->layerAt(m_startLayerNumber);
         m_frameNumber = getFrameNumber(event->pos().x());
-        if(layer->getMaxKeyFramePosition() <= m_frameNumber)
-            return;
         QMenu contextMenu(this);
-        contextMenu.addAction(tr("Set Exposure Value..."), this, &TimeLineCells::changeExposure);
-        contextMenu.addAction(tr("Delete image..."), this, &TimeLineCells::deleteImage);
+        if (!layer->selectedKeyFrameIsEmpty()){
+            contextMenu.addAction(tr("Register from rest position"), this, &TimeLineCells::automaticRegistration);
+        }
+        contextMenu.addSeparator();
+        if (!layer->selectedKeyFrameIsEmpty()){
+            QMenu * subMenuPaste = contextMenu.addMenu("Paste Key Frames ...");
+            subMenuPaste->addAction(tr("at this frame"), this, &TimeLineCells::pasteKeyFrame);
+            subMenuPaste->addAction(tr("at the end"), this, &TimeLineCells::pasteKeyFrameAtTheEnd);
+            QMenu * subMenuLoop = contextMenu.addMenu("Loop KeyFrames ...");
+            subMenuLoop->addAction(tr("at this frame"), this, &TimeLineCells::pasteMultipleKeyFrame);
+            subMenuLoop->addAction(tr("at the end"), this, &TimeLineCells::pasteMultipleKeyFrameAtTheEnd);
+        }
+        contextMenu.addSeparator();
+        if(layer->getMaxKeyFramePosition() > m_frameNumber){
+            contextMenu.addAction(tr("Set Exposure Value..."), this, &TimeLineCells::changeExposure);
+            contextMenu.addAction(tr("Delete image..."), this, &TimeLineCells::deleteImage);
+        }
         contextMenu.exec(event->globalPos());
     }
 }
@@ -445,6 +525,48 @@ void TimeLineCells::deleteImage()
 {
     m_editor->undoStack()->push(new ChangeExposureCommand(m_editor, m_startLayerNumber, m_frameNumber, -1));
 }
+
+void TimeLineCells::automaticRegistration(){
+    Layer * layer = m_editor->layers()->layerAt(m_startLayerNumber);
+    for (VectorKeyFrame * key : layer->getSelectedKeyFrames()){
+        m_editor->registerFromRestPosition(key, true);
+    }
+}
+
+void TimeLineCells::pasteKeyFrame(){
+    Layer * layer = m_editor->layers()->layerAt(m_startLayerNumber);
+    int keyIndex = m_frameNumber;
+    layer->insertSelectedKeyFrame(m_startLayerNumber, keyIndex);
+    update();
+}
+
+void TimeLineCells::pasteKeyFrameAtTheEnd(){
+    Layer * layer = m_editor->layers()->layerAt(m_startLayerNumber);
+    int keyIndex = layer->getMaxKeyFramePosition();
+    layer->insertSelectedKeyFrame(m_startLayerNumber, keyIndex);
+    update();
+}
+
+void TimeLineCells::pasteMultipleKeyFrame(){
+    Layer * layer = m_editor->layers()->layerAt(m_startLayerNumber);
+    int keyIndex = m_frameNumber;
+    bool ok;
+    int n = QInputDialog::getInt(this, tr("Add loops"), tr("Number"), 1, 1, 100, 1, &ok);
+    if (!ok) return;
+    layer->insertSelectedKeyFrame(m_startLayerNumber, keyIndex, n);
+    update();
+}
+
+void TimeLineCells::pasteMultipleKeyFrameAtTheEnd(){
+    Layer * layer = m_editor->layers()->layerAt(m_startLayerNumber);
+    int keyIndex = layer->getMaxKeyFramePosition();
+    bool ok;
+    int n = QInputDialog::getInt(this, tr("Add loops"), tr("Number"), 1, 1, 100, 1, &ok);
+    if (!ok) return;
+    layer->insertSelectedKeyFrame(m_startLayerNumber, keyIndex, n);
+    update();
+}
+
 
 void TimeLineCells::fontSizeChange(int x)
 {

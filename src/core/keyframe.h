@@ -1,13 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2012-2014 Matthew Chiawen Chang
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
-
 #ifndef KEYFRAME_H
 #define KEYFRAME_H
 
@@ -21,9 +11,6 @@ class KeyFrame {
     KeyFrame() : m_topSelected(false), m_bottomSelected(false) {}
 
     virtual ~KeyFrame() {}
-
-    // if prev is not nullptr, use the previous keyframe backward transformation to interpolate
-    virtual void paintImage(QPainter &painter, float alpha, int inbetween, const QColor &color, qreal tintFactor, bool useGroupColor = false) = 0;
 
     virtual bool load(QDomElement &element, const QString &path, Editor *editor) = 0;
     virtual bool save(QDomDocument &doc, QDomElement &root, const QString &path, int layer, int frame) const = 0;

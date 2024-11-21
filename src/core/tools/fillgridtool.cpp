@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "fillgridtool.h"
 
 #include "vectorkeyframe.h"
@@ -11,7 +5,7 @@
 #include "editor.h"
 #include "layermanager.h"
 #include "playbackmanager.h"
-#include "canvasscenemanager.h"
+
 #include "tabletcanvas.h"
 #include "qteigen.h"
 
@@ -27,10 +21,6 @@ Tool::ToolType FillGridTool::toolType() const {
     return Tool::FillGrid;
 }
 
-QGraphicsItem *FillGridTool::graphicsItem() {
-    return nullptr;
-}
-
 QCursor FillGridTool::makeCursor(float scaling) const {
     return QCursor(Qt::ArrowCursor);
 }
@@ -42,7 +32,6 @@ void FillGridTool::toggled(bool on) {
     VectorKeyFrame *keyframe = layer->getLastVectorKeyFrameAtFrame(currentFrame, 0);
     if (keyframe->selectedGroup() != nullptr) {
         keyframe->selectedGroup()->setShowGrid(on);
-        m_editor->scene()->selectedGroupChanged(on ? QHash<int, Group *>() : keyframe->selection().selectedPostGroups());
         m_editor->tabletCanvas()->updateCurrentFrame();
     }    
 }
@@ -77,7 +66,7 @@ void FillGridTool::wheel(const WheelEventInfo& info) {
     
 }
 
-void FillGridTool::draw(QPainter &painter, VectorKeyFrame *key) {
+void FillGridTool::drawUI(QPainter &painter, VectorKeyFrame *key) {
     if (key->selectedGroup(POST) != nullptr) {
         key->selectedGroup(POST)->lattice()->drawLattice(painter, 0.0, Qt::red, REF_POS);
     }
@@ -92,7 +81,7 @@ bool FillGridTool::addQuad(VectorKeyFrame *keyframe, Group *group, const Point::
     QuadPtr quad = group->lattice()->addQuad(pos, newQuad);
     if (newQuad) {
         group->lattice()->isConnected(); // TODO: can be optimized since we added a single quad
-        group->lattice()->setArapDirty();
+        group->setGridDirty();
         keyframe->makeInbetweensDirty();
     }
     // TODO deform new quads?
@@ -103,7 +92,7 @@ bool FillGridTool::removeQuad(VectorKeyFrame *keyframe, Group *group, const Poin
     QuadPtr q;
     int k;
     if (group->lattice()->contains(pos, REF_POS, q, k)){
-        if (q->elements().empty()) {
+        if (q->forwardStrokes().empty() && q->backwardStrokes().empty()) {
             group->lattice()->deleteQuad(k);
             group->lattice()->isConnected();
         }
@@ -115,4 +104,6 @@ bool FillGridTool::removeQuad(VectorKeyFrame *keyframe, Group *group, const Poin
 void FillGridTool::contextMenu(QMenu &contextMenu) {
     contextMenu.addSection("Edit grid");
     contextMenu.addAction(tr("Expand grid"), m_editor, &Editor::expandGrid);
+    contextMenu.addAction(tr("Change grid size"), m_editor, &Editor::changeGridSize);
+    contextMenu.addAction(tr("Clear grid"), m_editor, &Editor::clearGrid);
 }

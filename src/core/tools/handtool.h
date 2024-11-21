@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef __HANDTOOL_H__
 #define __HANDTOOL_H__
 
@@ -16,8 +10,6 @@ public:
     virtual ~HandTool();
 
     Tool::ToolType toolType() const override;
-
-    QGraphicsItem *graphicsItem() override;
 
     QCursor makeCursor(float scaling=1.0f) const override;
     

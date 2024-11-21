@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef __ERASERTOOL_H__
 #define __ERASERTOOL_H__
 
@@ -16,19 +10,24 @@ public:
 
     Tool::ToolType toolType() const override;
 
-    QGraphicsItem *graphicsItem() override;
-
     QCursor makeCursor(float scaling=1.0f) const override;
 
-    void pressed(const EventInfo& info) Q_DECL_OVERRIDE;
-    void moved(const EventInfo& info) Q_DECL_OVERRIDE;
-    void released(const EventInfo& info) Q_DECL_OVERRIDE;
+    void toggled(bool on) override;
+    void pressed(const EventInfo& info) override;
+    void moved(const EventInfo& info) override;
+    void released(const EventInfo& info) override;
+    void wheel(const WheelEventInfo& info) override;
+
+    void drawGL(VectorKeyFrame *key, qreal alpha) override;
 
 private:
     void erase(const EventInfo& info);
+    void eraseSegments(const EventInfo& info);
 
-    int m_prevFrame;
+    bool m_pressed;
+    int m_prevFrame, m_frame;
     VectorKeyFrame *m_keyframe;
+    QHash<unsigned int, double> m_savedVisibility;
 };
 
 #endif // __ERASERTOOL_H__

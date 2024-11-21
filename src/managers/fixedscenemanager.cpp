@@ -1,14 +1,7 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "fixedscenemanager.h"
 #include "editor.h"
 #include "tools/tool.h"
 #include "toolsmanager.h"
-#include "canvassceneitems.h"
 #include "layermanager.h"
 #include "playbackmanager.h"
 
@@ -35,7 +28,7 @@ void FixedSceneManager::setScene(QGraphicsScene *scene) {
 */
 void FixedSceneManager::updateKeyChart(VectorKeyFrame *keyframe) {
     Tool *currentTool = m_editor->tools()->currentTool();
-    if (currentTool != nullptr && !currentTool->isSpacingTool()) keyframe = nullptr;
+    if (currentTool != nullptr && !currentTool->isChartTool()) keyframe = nullptr;
     m_keyChart->refresh(keyframe);
     m_keyChart->update();
     m_scene->update();
@@ -68,10 +61,11 @@ void FixedSceneManager::frameChanged(int frame) {
 
 void FixedSceneManager::sceneResized(const QRectF& rect) {
     // TODO: weird stuff can happen if the timeline height is too big
-    m_keyChart->setPos(QPointF(rect.width() - m_keyChart->length() - 20, 50));
+    m_keyChart->setPos(QPointF(rect.width() / 2.0 - m_keyChart->length() / 2.0, 50));
 }
 
 void FixedSceneManager::updateChartMode(ChartItem::ChartMode mode) {
+    // qDebug() << "update chart mode: " << mode;
     m_keyChart->setChartMode(mode);
     m_keyChart->update();
     m_scene->update();

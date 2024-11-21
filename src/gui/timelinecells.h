@@ -1,13 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2012-2014 Matthew Chiawen Chang
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
-
 #ifndef TIMELINECELLS_H
 #define TIMELINECELLS_H
 
@@ -40,6 +30,7 @@ public:
     int getLayerHeight() { return layerHeight; }
     int getFrameLength() {return frameLength;}
     int getFrameSize() { return frameSize; }
+    bool selectionContainsVectorKeyFrame(int frame);
 
 signals:
     void mouseMovedY(int);
@@ -71,6 +62,12 @@ private slots:
     void changeExposure();
     void deleteImage();
 
+    void automaticRegistration();
+    void pasteKeyFrame();
+    void pasteKeyFrameAtTheEnd();
+    void pasteMultipleKeyFrame();
+    void pasteMultipleKeyFrameAtTheEnd();
+
 private:
     TimeLine* timeLine;
     Editor* m_editor;
@@ -88,6 +85,9 @@ private:
     int frameOffset, layerOffset;
     bool m_isChangingOpacity;
     qreal m_prevOpacity;
+
+    QPoint m_selectionBoxOrigin;
+    QRubberBand m_selectionBox;
 };
 
 #endif // TIMELINECELLS_H

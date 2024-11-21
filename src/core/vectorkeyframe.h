@@ -1,13 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2012-2014 Matthew Chiawen Chang
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
-
 #ifndef VECTOR_KEYFRAME_H
 #define VECTOR_KEYFRAME_H
 
@@ -15,6 +5,8 @@
 #include "stroke.h"
 #include "group.h"
 #include "grouplist.h"
+#include "grouporder.h"
+#include "partial.h"
 #include "selection.h"
 #include "inbetweens.h"
 #include "trajectory.h"
@@ -24,12 +16,18 @@
 #include <QPainter>
 #include <QPen>
 #include <QtXml>
-#include <QOpenGLShaderProgram>
 
 class Point;
 class Group;
 class GroupList;
 class Editor;
+
+struct AlignTangent {
+    bool m_use;
+    Point::VectorType m_axis;
+    AlignTangent(bool use, Point::VectorType axis) :
+        m_use(use), m_axis(axis) {}
+};
 
 class VectorKeyFrame : public KeyFrame {
    public:
@@ -46,14 +44,15 @@ class VectorKeyFrame : public KeyFrame {
     size_t nbStrokes() const { return m_strokes.size(); }
     QHash<int, StrokePtr> &strokes() { return m_strokes; }
     const QHash<int, StrokePtr> &strokes() const { return m_strokes; }
+    QHash<unsigned int, double> &visibility() { return m_visibility; }
+    const QHash<unsigned int, double> &visibility() const { return m_visibility; }
     void updateBuffers();
     void destroyBuffers();
 
     // Inbetweens
-    void computeIntermediateStrokes(float alpha, QHash<int, StrokePtr> &intermediateStrokes, QHash<int, StrokePtr> &backwardIntermediateStrokes, QHash<int, std::vector<Point::VectorType>> &corners) const;
+    void computeInbetween(qreal alpha, Inbetween &inbetween) const;
     void clearInbetweens();
     void initInbetweens(int stride);
-    void bakeAllInbetweens(Editor *editor);
     void bakeInbetween(Editor *editor, int frame, int inbetween, int stride);
     void updateInbetween(Editor *editor, size_t i);
     const Inbetweens &inbetweens() const { return m_inbetweens; }
@@ -61,6 +60,7 @@ class VectorKeyFrame : public KeyFrame {
     const QHash<int, StrokePtr> &inbetweenStrokes(unsigned int inbetweenIdx) const { return m_inbetweens[inbetweenIdx].strokes; }
     const QHash<int, std::vector<Point::VectorType>> &inbetweenCorners(unsigned int inbetweenIdx) const { return m_inbetweens[inbetweenIdx].corners; }
     void makeInbetweensDirty() { m_inbetweens.makeDirty(); }
+    void makeInbetweenDirty(int inbetween) { m_inbetweens.makeDirty(inbetween); }
 
     // Groups
     inline Group *selectedGroup(GroupType type = POST) const { return type == POST ? (m_selection.selectedPostGroups().empty() ? nullptr : m_selection.selectedPostGroups().begin().value()) 
@@ -72,6 +72,8 @@ class VectorKeyFrame : public KeyFrame {
     inline const GroupList &groups(GroupType type) const { return type == POST ? m_postGroups : m_preGroups; }
     inline const GroupList &preGroups() const { return m_preGroups; }
     inline const GroupList &postGroups() const { return m_postGroups; }
+    inline GroupOrder &groupOrder(double t=0.0) { return m_orderPartials.lastPartialAt(t).groupOrder(); }
+    inline Partials<OrderPartial> &orderPartials() { return m_orderPartials; }
 
     // Correspondences 
     const QHash<int, int>& correspondences() const { return m_correspondences; }
@@ -86,27 +88,38 @@ class VectorKeyFrame : public KeyFrame {
     VectorKeyFrame *prevKeyframe() { return m_layer->getPrevKey(this); }
 
     // Drawing
-    virtual void paintImage(QPainter &painter, float alpha, int inbetween, const QColor &color, qreal tintFactor, bool useGroupColor = false);
-    void paintImageGL(QOpenGLShaderProgram *program, QOpenGLFunctions *functions, float alpha, qreal opacityAlpha, int inbetween, const QColor &color, qreal tintFactor, bool useGroupColor = false);
-    void paintImageGL(QOpenGLShaderProgram *program, QOpenGLFunctions *functions, qreal opacityAlpha, const QColor &color, qreal tintFactor, bool useGroupColor = false, GroupType type=POST);
-    void paintGroup(QPainter &painter, Group *group, int inbetween, const QColor &color, qreal tintFactor, bool useGroupColor = false);
-    void paintGroupGL(QOpenGLShaderProgram *program, QOpenGLFunctions *functions, float alpha, double opacityAlpha, Group *group, int inbetween, const QColor &color, double tintFactor, double strokeWeightFactor=1.0,  bool useGroupColor = false, bool crossFade = true);
-    void paintGroupGL(QOpenGLShaderProgram *program, QOpenGLFunctions *functions, double opacityAlpha, Group *group,const QColor &color, double tintFactor, double strokeWeightFactor=1.0,  bool useGroupColor = false);
+    void paintGroupGL(QOpenGLShaderProgram *program, QOpenGLFunctions *functions, qreal alpha, double opacityAlpha, Group *group, int inbetween, const QColor &color, double tintFactor, double strokeWeightFactor=1.0,  bool useGroupColor = false, bool crossFade = true, bool ignoreMask = false);
+    void paintGroupGL(QOpenGLShaderProgram *program, QOpenGLFunctions *functions, double opacityAlpha, Group *group, const QColor &color, double tintFactor, double strokeWeightFactor=1.0,  bool useGroupColor = false, bool ignoreMask = false);
 
     // Saving/loading
     virtual bool load(QDomElement &element, const QString &path, Editor *editor);
     virtual bool save(QDomDocument &doc, QDomElement &root, const QString &path, int layer, int frame) const;
 
     // Global rigid transform
-    const Point::VectorType& pivot() const { return m_pivot; }
-    void setPivot(const Point::VectorType& pivot) { m_pivot = pivot; }
+    KeyframedVector *pivot() const { return m_pivot; }
     KeyframedVector *translation() const { return &(m_transform->translation); }
-    KeyframedFloat *rotation() const { return &(m_transform->rotation); }
+    KeyframedReal *rotation() const { return &(m_transform->rotation); }
+    KeyframedVector *scaling() const { return &(m_transform->scaling); }
     KeyframedTransform *keyframedTransform() const { return m_transform; }
-    KeyframedFloat *spacing() const { return m_spacing; }
-    void toggleAlignFrameToTangent() { m_alignFrameToTangent = !m_alignFrameToTangent; };
+    KeyframedReal *spacing() const { return m_spacing; }
+    void setAlignFrameToTangent(bool start, AlignTangent alignTangent);
+    AlignTangent getAlignFrameToTangent(bool start) const { return start ? m_alignTangentStart : m_alignTangentEnd; };
+    float getFrameRotation(float t) const;
     Point::Affine rigidTransform(float t) const;
     void resetRigidDeformation();
+    Bezier2D * getPivotCurve() { return m_pivotCurve; };
+
+    void setPivotCurve(Bezier2D * curve) { m_pivotCurve = curve; };
+    void updateTransforms(Point::VectorType pivotTranslation0 = Point::VectorType::Zero(), Point::VectorType pivotTranslation1 = Point::VectorType::Zero());
+    bool isTranslationExtracted() const { return m_pivotTranslationExtracted; };
+    void extractPivotTranslation();
+    void insertPivotTranslation();
+    bool isRotationExtracted() const { return m_pivotRotationExtracted; };
+    void extractPivotRotation(float startAngle, float endAngle);
+    void insertPivotRotation();
+
+    Point::VectorType getCenterOfGravity(PosTypeIndex type = TARGET_POS) const;
+    float optimalRotationAngle(Point::VectorType centerSrc, PosTypeIndex source, Point::VectorType centerTarget, PosTypeIndex target);
 
     // Trajectories
     unsigned int addTrajectoryConstraint(const std::shared_ptr<Trajectory> &traj);
@@ -117,7 +130,7 @@ class VectorKeyFrame : public KeyFrame {
     std::shared_ptr<Trajectory> trajectoryConstraint(unsigned int idx) const { return m_trajectories.value(idx); }
     unsigned int nbTrajectoryConstraints() const { return m_trajectories.size(); }
     const QHash<unsigned int, std::shared_ptr<Trajectory>>& trajectories() const { return m_trajectories; }
-    void resetTrajectories();
+    void resetTrajectories(bool onlySelected=false);
     void toggleHardConstraint(bool on);
     void updateCurves();
 
@@ -128,11 +141,11 @@ class VectorKeyFrame : public KeyFrame {
     void updateBounds(Stroke *stroke);
     virtual void transform(QRectF newBoundaries, bool smoothTransform);
     Layer *parentLayer() const { return m_layer; }
-    int parentLayerId() const;
+    int parentLayerOrder() const;
 
     VectorKeyFrame *copy();
     VectorKeyFrame *copy(const QRectF &selection) const;
-    void copyDeformedGroup(VectorKeyFrame *dst, Group *srcGroup);
+    void copyDeformedGroup(VectorKeyFrame *dst, Group *srcGroup, bool makeBreakdown=false);
     void paste(VectorKeyFrame *);
     void paste(VectorKeyFrame *, const QRectF &target);
 
@@ -140,35 +153,44 @@ class VectorKeyFrame : public KeyFrame {
     void initOriginStrokes();
     void resetOriginStrokes();
     
-    void createBreakdown(Editor *editor, VectorKeyFrame *newKeyframe, VectorKeyFrame *nextKeyframe, const Inbetween& inbetweenCopy, int inbetween, float alpha);
-    void makeNextPreGroup(Editor *editor, Group *post);
+    void createBreakdown(Editor *editor, VectorKeyFrame *newKeyframe, VectorKeyFrame *nextKeyframe, const Inbetween& inbetweenCopy, int inbetween, qreal alpha);
+    void toggleCrossFade(Editor *editor, Group *post);
 
     float getNextGroupHue();
     unsigned int maxStrokeIdx() const { return m_maxStrokeIdx; }
     unsigned int pullMaxStrokeIdx() { return m_maxStrokeIdx++; }
     unsigned int pullMaxConstraintIdx() { return m_maxConstraintIdx++; }
+    int keyframeNumber() { return m_layer->getVectorKeyFramePosition(this); }
 
    private:
-    Layer *m_layer;                         // parent layer of this KF
+    Layer *m_layer;                             // parent layer of this KF
 
-    float m_currentGroupHue;                // used for cycling group color
-    unsigned int m_maxStrokeIdx;            // used for indexing strokes
-    unsigned int m_maxConstraintIdx;        // used for indexing constraints
+    float m_currentGroupHue;                    // used for cycling group color
+    unsigned int m_maxStrokeIdx;                // used for indexing strokes
+    unsigned int m_maxConstraintIdx;            // used for indexing constraints
 
-    QHash<int, StrokePtr> m_strokes;        // all strokes in the keyframe
-    Inbetweens m_inbetweens;                // baked inbetweens between this keyframe and the next. The first inbetween is at idx 0 and the last stored inbetween is t=1.0!
+    QHash<int, StrokePtr> m_strokes;            // all strokes in the keyframe
+    Inbetweens m_inbetweens;                    // baked inbetweens between this keyframe and the next. The first inbetween is at idx 0 and the last stored inbetween is t=1.0!
     
-    GroupList m_preGroups;                  // segmentation of m_strokes used for backward interpolation
-    GroupList m_postGroups;                 // segmentation of m_strokes used for forward interpolation
+    Partials<OrderPartial> m_orderPartials;     // drawing order of post groups
+    GroupList m_preGroups;                      // subset of m_strokes used for backward interpolation
+    GroupList m_postGroups;                     // subset of m_strokes used for forward interpolation
+    QHash<unsigned int, double> m_visibility;   // point visibility, i.e. at which time should points appear (key is cantor(stroke id, point idx))
 
     Selection m_selection;
-    QHash<int, int> m_correspondences;      // correspondonce post->pre with the next KF
-    QHash<int, int> m_intraCorrespondences; // correspondence pre->post inside this KF
+    QHash<int, int> m_correspondences;          // correspondonce post->pre with the next KF
+    QHash<int, int> m_intraCorrespondences;     // correspondence pre->post inside this KF
 
-    Point::VectorType m_pivot;              // center of rotation of the drawing
-    KeyframedTransform *m_transform;        // rigid transform of the drawing
-    KeyframedFloat *m_spacing;              // spacing curve: controls the flow of time for the forward interpolation
-    bool m_alignFrameToTangent;             // should the drawing be aligned with the tangent its trajectory
+    Bezier2D * m_pivotCurve;
+    KeyframedVector *m_pivot;                   // center of rotation of the drawing
+
+    bool m_pivotTranslationExtracted;
+    bool m_pivotRotationExtracted;
+    KeyframedTransform *m_transform;            // rigid transform of the drawing
+    KeyframedReal *m_spacing;                   // spacing curve: controls the flow of time for the forward interpolation
+
+    AlignTangent m_alignTangentStart;
+    AlignTangent m_alignTangentEnd;
     QHash<unsigned int, std::shared_ptr<Trajectory>> m_trajectories; // trajectory constraints
 };
 

@@ -14,9 +14,11 @@ It is originally based on [Pencil2D](https://www.pencil2d.org/).
 
 ## Dependencies
 - [Eigen](https://eigen.tuxfamily.org/index.php?title=Main_Page)
+- [Clipper2](https://github.com/AngusJohnson/Clipper2)
 - [CPD](https://github.com/gadomski/cpd)
 - [FGT](https://github.com/gadomski/fgt)
 - [nanoflann](https://github.com/jlblancoc/nanoflann)
+- [quazip](https://github.com/stachenov/quazip)
 
 They are automatically downloaded by `cmake` during the project configuration.
 
@@ -68,38 +70,40 @@ xsetwacom --get 13 Gesture off
 
 ## Keyboard shortcuts
 
-#### Tools
+#### Tools shortcuts
 
 | Action               | Shortcut                                      |
 |:-------------------- | ---------                                     |
 | Draw                 | *P*                                           |
-| Eraser               | *E*                                           |
+| Erase                | *E*                                           |
 | Pan                  | Hold *middle mouse button* or *H* to toggle   |
-| Clear frame          | *K*                                           |
 | Select group (lasso) | *S*                                           |
 | Create group (lasso) | *G*                                           |
-| Warp selected group  | *W*                                           |
-| Trajectory  | *T*                                           |
-| Spacing  | *I*                                           |
+| Warp selected groups | *W*                                           |
+| Make correspondences | *Shift+M*                                     |
+| Trajectory           | *T*                                           |
+| Spacing              | *I*                                           |
 
-#### Actions
+#### Actions shortcuts
 
 | Action                                         | Shortcut                |
 |:---------------------------------------------- | ----------------------- |
 | Toggle onion skin                              | *O*                     |
+| Clear frame                                    | *K*                     |
 | Automatic registration *                       | *M*                     |
-| Single-step registration *                     | *Ctrl+M*                     |
+| Single-step registration *                     | *Ctrl+M*                |
 | Regularize lattice                             | *R*                     |
 | Add breakdown                                  | *B*                     |
-| Cross-fade (copy next KF strokes in pre group) | *C*                     |
-| Copy the selected group into the next keyframe | *Shift+C*                     |
+| Toggle cross-fade                              | *Shift+C*               |
+| Copy selected groups into the next keyframe    | *C*                     |
 | Delete selected group                          | *Del*                   |
+| Select all groups                              | *Shift+A*               |
 | Deselect group                                 | *Esc* or *Ctrl+Shift+A* |
-| Deselect (in all KF of the current layer)      | *Shift+Esc*             |
+| Deselect groups in all layers and keyframes    | *Shift+Esc*             |
 
 \* For these actions holding *Ctrl* will use the entire next keyframe as the registration target. 
 
-#### Timeline
+#### Timeline shortcuts
 
 |              Action              |    Shortcut               |
 |----------------------------------|---------------------------|
@@ -107,3 +111,12 @@ xsetwacom --get 13 Gesture off
 | Change frame                     | *Left/right arrow*        |
 | Change keyframe                  | *Ctrl + left/right arrow* |
 
+### Code
+
+#### Structures
+![structures](img/structures_code.png "Structures")
+
+
+#### Algo contributions:
+- layoutmanager.h (automatic layout computation and propagation)
+- visibilitymanager.h (automatic visibility thresholds computation)

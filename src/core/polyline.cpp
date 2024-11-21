@@ -1,17 +1,14 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
+#include "polyline.h"
+
+#include "utils/geom.h"
 
 #include <QDebug>
-
-#include "polyline.h"
-#include "piecewiselinearutils.h"
 #include <iostream>
 
 using namespace Eigen;
+
 namespace Frite {
+
 Polyline::Polyline(const std::vector<Point *> &pts) {
     _pts.reserve(pts.size());
     for (const Point *p : pts) {
@@ -67,6 +64,9 @@ void Polyline::load(QTextStream &posStream, size_t size) {
 }
 
 void Polyline::clear() {
+    for (const Point *p : _pts) {
+        delete p;
+    }
     _pts.clear();
     _lengths.clear();
 }
@@ -84,25 +84,48 @@ void Polyline::eval(Point::Scalar s, Point::VectorType *pos, Point::VectorType *
     Point::Scalar dist = _lengths[idx + 1] - _lengths[idx];
     Point::Scalar invLength = dist == 0.0 ? 1.0 : (1.0 / dist);
     Point::VectorType pointPos;
-    Point::Scalar cParamNorm = cParam * invLength;
-    if (pos) (*pos) = _pts.at(idx)->pos() + cParamNorm * (_pts.at(nextIdx)->pos() - _pts.at(idx)->pos());
+    Point::Scalar t = cParam * invLength;
+    Point::Scalar tComp = 1.0 - t; 
+    if (pos) (*pos) = tComp * _pts.at(idx)->pos() + t * _pts.at(nextIdx)->pos();
     if (der) (*der) = (_pts.at(nextIdx)->pos() - _pts.at(idx)->pos()) * invLength;
     if (der2) (*der2) = Point::VectorType();  // (*der2) = 6 * ((1 - t) * _pts[0] + t * _pts[3] + (3 * t - 2) * _pts[1] + (1 - 3 * t) * _pts[2]);
     if (point) {
-        // linearly interpolate all point properties
-        (*point).setPos(_pts.at(idx)->pos() + cParamNorm * (_pts.at(nextIdx)->pos() - _pts.at(idx)->pos()));
-        (*point).setTemporalW(_pts.at(idx)->temporalW() + cParamNorm * (_pts.at(nextIdx)->temporalW() - _pts.at(idx)->temporalW()));
-        (*point).setInterval(_pts.at(idx)->interval() + cParamNorm * (_pts.at(nextIdx)->interval() - _pts.at(idx)->interval()));
-        (*point).setPressure(_pts.at(idx)->pressure() + cParamNorm * (_pts.at(nextIdx)->pressure() - _pts.at(idx)->pressure()));
+        // Linearly interpolate all point properties
+        (*point).setPos(tComp * _pts.at(idx)->pos() + t * _pts.at(nextIdx)->pos());
+        (*point).setTemporalW(tComp * _pts.at(idx)->temporalW() + t * _pts.at(nextIdx)->temporalW());
+        (*point).setInterval(tComp * _pts.at(idx)->interval() + t * _pts.at(nextIdx)->interval());
+        (*point).setPressure(tComp * _pts.at(idx)->pressure() + t * _pts.at(nextIdx)->pressure());
+        (*point).setPressure(tComp * _pts.at(idx)->pressure() + t * _pts.at(nextIdx)->pressure());
+        (*point).setColor(QColor(
+            tComp * _pts.at(idx)->getColor().redF() + t * _pts.at(nextIdx)->getColor().redF(),
+            tComp * _pts.at(idx)->getColor().greenF() + t * _pts.at(nextIdx)->getColor().greenF(),
+            tComp * _pts.at(idx)->getColor().blueF() + t * _pts.at(nextIdx)->getColor().blueF()
+        ));
         // TODO: compute normals
         // also m_interval?
     }
 }
 
+void Polyline::eval(Point::Scalar s, Point::VectorType &outPos, Point::Scalar &outPressure, QColor &outColor) const {
+    Point::Scalar cParam;
+    int idx = paramToIdx(s, &cParam);
+    int nextIdx = (idx + 1) % _pts.size();
+    Point::Scalar dist = _lengths[idx + 1] - _lengths[idx];
+    Point::Scalar invLength = dist == 0.0 ? 1.0 : (1.0 / dist);
+    Point::Scalar t = cParam * invLength;
+    Point::Scalar tComp = 1.0 - t;
+    outPos = tComp * _pts.at(idx)->pos() + t * _pts.at(nextIdx)->pos();
+    outPressure = tComp * _pts.at(idx)->pressure() + t * _pts.at(nextIdx)->pressure();
+    outColor.setRgbF(
+        tComp * _pts.at(idx)->getColor().redF() + t * _pts.at(nextIdx)->getColor().redF(),
+        tComp * _pts.at(idx)->getColor().greenF() + t * _pts.at(nextIdx)->getColor().greenF(),
+        tComp * _pts.at(idx)->getColor().blueF() + t * _pts.at(nextIdx)->getColor().blueF()
+    );
+}
+
 Point::Scalar Polyline::project(const Point::VectorType &point) const {
     Point::Scalar bestS = 0.;
     Point::Scalar minDistSq = (point - _pts[0]->pos()).squaredNorm();
-
     for (size_t i = 0; i < _pts.size() - 1; ++i) {
         Point::Scalar len = (_lengths[i + 1] - _lengths[i]);
         Point::Scalar invLen = 1. / len;
@@ -110,7 +133,6 @@ Point::Scalar Polyline::project(const Point::VectorType &point) const {
         Point::Scalar dot = der.dot(point - _pts[i]->pos());
         if (dot < 0.) dot = 0.;
         if (dot > len) dot = len;
-
         Point::VectorType ptOnLine = _pts[i]->pos() + (_pts[i + 1]->pos() - _pts[i]->pos()) * (dot * invLen);
         Point::Scalar distSq = (ptOnLine - point).squaredNorm();
         if (distSq < minDistSq) {
@@ -118,7 +140,6 @@ Point::Scalar Polyline::project(const Point::VectorType &point) const {
             bestS = _lengths[i] + dot;
         }
     }
-
     return bestS;
 }
 
@@ -264,103 +285,55 @@ bool Polyline::removeSection(int from, int to, std::vector<Point *> &remainder) 
 }
 
 void Polyline::resample(Point::Scalar maxSampling, Point::Scalar minSampling, Polyline &resampledPolyline) {
-    std::vector<Point *> outPts;
-    std::vector<Point *> tmp;
-    PiecewiseLinearMonotone origToCur(PiecewiseLinearMonotone::POSITIVE);
-
-    const Point::Scalar radius = 2.;
+    resampledPolyline.clear();
+    const Point::Scalar radius = minSampling;
     const Point::Scalar radiusSq = radius * radius;
 
     // First mark the points on the original curve we definitely want to keep (e.g., corners) using Douglas-Peucker
-    std::vector<bool> keep = markDouglasPeucker(_pts, 3.);
+    std::vector<bool> keep = markDouglasPeucker(.25);
 
-    // Go through the points and resample them at the rate of radius, discarding those that are too close
-    // to the previous output point, and subdiving the line segments between points that are too far.
-    // Note that we don't want to simply resample the curve by the arclength parameterization, because
-    // noisy regions with too much arclength will get too many samples.
-    outPts.push_back(_pts[0]);
-    origToCur.add(0, 0);
+    resampledPolyline.addPoint(new Point(*_pts[0]));
     Point::Scalar lengthSoFar = 0;
     for (size_t i = 1; i < _pts.size(); ++i) {
-        Point *curResampled = outPts.back();
+        Point *curResampled = resampledPolyline._pts[resampledPolyline.size() - 1];
         Point *curPt = _pts[i];
 
         Point::Scalar distSqToCur = (curPt->pos() - curResampled->pos()).squaredNorm();
+        Point::Scalar dist;
 
-        // If it's the last point or was marked for keeping, just output it
+        // If it's the last point or it was marked by douglas-peucker, keep it
         if (i + 1 == _pts.size() || keep[i]) {
-            lengthSoFar += sqrt(distSqToCur);
-            origToCur.add(idxToParam(i), lengthSoFar);
-            if (distSqToCur > 1e-16) outPts.push_back(curPt);
-            continue;
-        }
-
-        // If this point is within radius of the last output point (i.e., too close), discard it.
-        if (distSqToCur < radiusSq) continue;
-
-        // The previous point has to be within radius of the previous output point
-        Point *prevPt = _pts[i - 1];
-
-        // Find the intersection of the line segment between the previous and the current point with the circle
-        // centered at the last output point whose radius is "radius".
-        ParametrizedLine<Point::Scalar, 2> line = ParametrizedLine<Point::Scalar, 2>::Through(prevPt->pos(), curPt->pos());
-
-        Point::Scalar projectedLineParam = line.direction().dot(curResampled->pos() - line.origin());
-        Point::VectorType closestOnLine = line.origin() + line.direction() * projectedLineParam;
-        Point::Scalar distSqToLine = (curResampled->pos() - closestOnLine).squaredNorm();
-        if (distSqToLine < 1e-16) {
-            lengthSoFar += sqrt(distSqToCur);
-            origToCur.add(idxToParam(i), lengthSoFar);
-            outPts.push_back(curPt);
-            continue;
-        }
-        Point::Scalar y = std::sqrt(std::max(0.0, radiusSq - distSqToLine));
-        Point::VectorType newPt = closestOnLine + y * line.direction();  // y is positive, so this will find the correct point
-
-        lengthSoFar += (curResampled->pos() - newPt).norm();
-        origToCur.add(idxToParam(i - 1) + projectedLineParam + y, lengthSoFar);
-        Point *pt = point(idxToParam(i - 1) + projectedLineParam + y);
-        pt->setPos(newPt);
-        outPts.push_back(pt);
-        tmp.push_back(pt);
-        --i;
-    }
-
-    Polyline curve(outPts);
-    for (Point *p : tmp) {
-        delete p;
-    }
-
-    std::vector<Point::Scalar> samples;
-    Point::Scalar prevParam = 0.;
-    samples.push_back(prevParam);
-    for (size_t i = 1; i < curve.pts().size(); ++i) {
-        Point::Scalar nextParam = curve.idxToParam(i);
-        Point::Scalar diffParam = nextParam - prevParam;
-        if (diffParam > maxSampling) {
-            for (int j = 1; j < qRound(diffParam / maxSampling); ++j) {
-                Point::Scalar newParam = prevParam + j * maxSampling;
-                samples.push_back(newParam);
+            dist = sqrt(distSqToCur);
+            lengthSoFar += dist;
+            if (dist > 1e-16) {
+                if (dist > radius) {
+                    size_t count = dist / radius;
+                    Point::Scalar s = dist / count; 
+                    Point::VectorType m0, m1;
+                    if (i == 1) m0 = ((_pts[1]->pos() - _pts[0]->pos()) - (_pts[2]->pos() - _pts[1]->pos()) ) / 2.0;
+                    else        m0 = (_pts[i]->pos() - _pts[i - 2]->pos()) / 2.0;
+                    if (i == _pts.size() - 1)   m1 = ((_pts[_pts.size() - 1]->pos() - _pts[_pts.size() - 2]->pos()) - (_pts[_pts.size() - 2]->pos() - _pts[_pts.size() - 3]->pos()) ) / 2.0;
+                    else                        m1 = (_pts[i + 1]->pos() - _pts[i - 1]->pos()) / 2.0;
+                    for (size_t j = 0; j < count - 1; ++j) {
+                        double a = ((j + 1) * radius) / (dist);
+                        Point::VectorType smoothInterpPos =  Geom::evalCubicHermite((j + 1) * s, 0.0, dist, curResampled->pos(), m0, curPt->pos(), m1);
+                        Point *newPoint = new Point(smoothInterpPos.x(), smoothInterpPos.y(), curPt->interval() * a + curResampled->interval() * (1.0 - a), curPt->pressure() * a + curResampled->pressure() * (1.0 - a));
+                        resampledPolyline.addPoint(newPoint);
+                    }
+                }
+                resampledPolyline.addPoint(new Point(*curPt));
             }
         }
-        if (diffParam < minSampling) {
-            int newI = i;
-            for (int j = 1; i + j < curve.pts().size(); ++j) {
-                newI = i + j;
-                if ((curve.idxToParam(newI) - prevParam) >= minSampling) break;
-            }
-            nextParam = curve.idxToParam(newI);
-            samples.push_back(nextParam);
-            i = newI;
-        }
-        if (nextParam > (samples.back() + 0.1)) samples.push_back(nextParam);
-        prevParam = nextParam;
     }
+}
 
-    resampledPolyline.clear();
-    for (int i = 0; i < (int)samples.size(); ++i) {
-        resampledPolyline.addPoint(point(samples[i]));
-        // if (isnan((double)resampledPolyline._pts.back()->pos().x()) || isnan((double)resampledPolyline._pts.back()->pos().y())) qDebug() << "Error after resampling";
+void Polyline::smoothPressure() {
+    std::vector<double> pressures(_pts.size());
+    for (int i = 0; i < _pts.size(); ++i) {
+        pressures[i] = _pts[i]->pressure();
+    }
+    for (int i = 1; i < _pts.size() - 1; ++i) {
+        _pts[i]->setPressure((pressures[i - 1] + pressures[i] + pressures[i + 1]) / 3.0);
     }
 }
 
@@ -374,20 +347,19 @@ void Polyline::updateLengths() {
     }
 }
 
-std::vector<bool> Polyline::markDouglasPeucker(const std::vector<Point *> &pts, Point::Scalar cutoff) {
-    std::vector<bool> out(pts.size(), false);
+std::vector<bool> Polyline::markDouglasPeucker(Point::Scalar cutoff) {
+    std::vector<bool> out(_pts.size(), false);
     out.front() = out.back() = true;
-
-    dpHelper(pts, out, cutoff, 0, pts.size());
+    dpHelper(out, cutoff, 0, _pts.size());
     return out;
 }
 
-void Polyline::dpHelper(const std::vector<Point *> &pts, std::vector<bool> &out, Point::Scalar cutoff, int start, int end) {
-    ParametrizedLine<Point::Scalar, 2> cur = ParametrizedLine<Point::Scalar, 2>::Through(pts[start]->pos(), pts[end - 1]->pos());
+void Polyline::dpHelper(std::vector<bool> &out, Point::Scalar cutoff, int start, int end) {
+    ParametrizedLine<Point::Scalar, 2> cur = ParametrizedLine<Point::Scalar, 2>::Through(_pts[start]->pos(), _pts[end - 1]->pos());
     Point::Scalar maxDist = cutoff;
     int mid = -1;
     for (int i = start; i < end; ++i) {
-        Point::Scalar dist = cur.distance(pts[i]->pos());
+        Point::Scalar dist = cur.distance(_pts[i]->pos());
         if (dist > maxDist) {
             maxDist = dist;
             mid = i;
@@ -395,7 +367,40 @@ void Polyline::dpHelper(const std::vector<Point *> &pts, std::vector<bool> &out,
     }
     if (mid < 0) return;
     out[mid] = true;
-    dpHelper(pts, out, cutoff, start, mid + 1);
-    dpHelper(pts, out, cutoff, mid, end);
+    dpHelper(out, cutoff, start, mid + 1);
+    dpHelper(out, cutoff, mid, end);
 }
+
+std::vector<Point::Scalar> Polyline::resampleArclength(double minSampling, double maxSampling) {
+    std::vector<Point::Scalar> samples;
+    samples.reserve(std::ceil(length() / maxSampling));
+    Point::Scalar prevParam = 0.;
+    samples.push_back(prevParam);
+    for (size_t i = 1; i < _pts.size(); ++i) {
+        Point::Scalar nextParam = idxToParam(i);
+        Point::Scalar diffParam = nextParam - prevParam;
+        // Parameter gap too big: add as many new samples as necessary to keep the gap < maxSampling 
+        if (diffParam > maxSampling) {
+            for (int j = 1; j < qRound(diffParam / maxSampling); ++j) {
+                Point::Scalar newParam = prevParam + j * maxSampling;
+                samples.push_back(newParam);
+            }
+        }
+        // Parameter gap too small: remove as many samples as necessary to keep the gap < minSampling
+        if (diffParam < minSampling) {
+            int newI = i;
+            for (int j = 1; i + j < _pts.size(); ++j) {
+                newI = i + j;
+                if ((idxToParam(newI) - prevParam) >= minSampling) break;
+            }
+            nextParam = idxToParam(newI);
+            samples.push_back(nextParam);
+            i = newI;
+        }
+        if (nextParam > (samples.back() + 0.1)) samples.push_back(nextParam);
+        prevParam = nextParam;
+    }
+    return samples;
+}
+
 };

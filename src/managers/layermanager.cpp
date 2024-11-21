@@ -1,13 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2012-2014 Matthew Chiawen Chang
- * SPDX-FileCopyrightText: 2018-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
-
 #include "layermanager.h"
 #include "layer.h"
 #include "editor.h"
@@ -16,10 +6,11 @@
 
 LayerManager::LayerManager(QObject* pParent) : BaseManager(pParent) { m_currentLayerIndex = -1; }
 
-LayerManager::~LayerManager() { clear(); }
+LayerManager::~LayerManager() { 
+    clear(); 
+}
 
 void LayerManager::clear() {
-    qDeleteAll(m_layers);
     m_layers.clear();
     m_indices.clear();
     m_currentLayerIndex = -1;
@@ -38,8 +29,9 @@ bool LayerManager::load(QDomElement& element, const QString& path) {
             success = success & layer->load(element, path);
         }
     }
-    // update the map and indices list with the new layer idx
-    QMap<int, Layer *> newLayers;
+
+    // Update the map and indices list with the new layer idx
+    QMap<int, std::shared_ptr<Layer>> newLayers;
     QList<int> newIndices(m_indices.size());
     for (auto it = m_layers.constBegin(); it != m_layers.constEnd(); ++it) {
         int newId = it.value()->id();
@@ -60,14 +52,33 @@ bool LayerManager::save(QDomDocument& doc, QDomElement& root, const QString& pat
     return true;
 }
 
-Layer* LayerManager::currentLayer() { return currentLayer(0); }
+Layer* LayerManager::currentLayer() const { 
+    return currentLayer(0); 
+}
 
-Layer* LayerManager::currentLayer(int incr) { return layerAt(m_currentLayerIndex + incr); }
+Layer* LayerManager::currentLayer(int incr) const { 
+    return layerAt(m_currentLayerIndex + incr); 
+}
+
+std::shared_ptr<Layer> LayerManager::currentLayerSharedPtr() const {
+    return layerAtSharedPtr(m_currentLayerIndex);
+}
 
 /**
- * @param index the layer's idx in the layers list (not its internal m_id!)
+ * @param index the layer order! (not its internal m_id!)
 */
-Layer* LayerManager::layerAt(int index) {
+Layer* LayerManager::layerAt(int index) const {
+    if (index < 0 || index >= layersCount()) {
+        return nullptr;
+    }
+
+    return m_layers[m_indices[index]].get();
+}
+
+/**
+ * @param index the layer order! (not its internal m_id!)
+*/
+std::shared_ptr<Layer> LayerManager::layerAtSharedPtr(int index) const {
     if (index < 0 || index >= layersCount()) {
         return nullptr;
     }
@@ -81,7 +92,9 @@ void LayerManager::moveLayer(int i, int j) {
     std::swap(m_indices[i], m_indices[j]);
 }
 
-int LayerManager::currentLayerIndex() { return m_currentLayerIndex; }
+int LayerManager::currentLayerIndex() { 
+    return m_currentLayerIndex; 
+}
 
 void LayerManager::setCurrentLayer(int layerIndex) {
     if (layerIndex >= layersCount()) {
@@ -104,20 +117,6 @@ void LayerManager::setCurrentLayer(Layer* layer) {
     }
 }
 
-void LayerManager::gotoNextLayer() {
-    if (m_currentLayerIndex < layersCount() - 1) {
-        m_currentLayerIndex += 1;
-        emit currentLayerChanged(m_currentLayerIndex);
-    }
-}
-
-void LayerManager::gotoPreviouslayer() {
-    if (m_currentLayerIndex > 0) {
-        m_currentLayerIndex -= 1;
-        emit currentLayerChanged(m_currentLayerIndex);
-    }
-}
-
 Layer* LayerManager::newLayer() {
     Layer* layer = createLayer(m_layers.size());
     layer->addNewEmptyKeyAt(1);
@@ -127,14 +126,14 @@ Layer* LayerManager::newLayer() {
 void LayerManager::addLayer() { m_editor->undoStack()->push(new AddLayerCommand(this, m_currentLayerIndex + 1)); }
 
 Layer* LayerManager::createLayer(int layerIndex) {
-    Layer* layer = new Layer(this, m_editor);
+    std::shared_ptr<Layer> layer = std::make_shared<Layer>(m_editor);
     m_indices.insert(layerIndex, layer->id());
-    m_layers[layer->id()] = layer;
+    m_layers.insert(layer->id(), layer);
     layer->setName(QString("Layer %1").arg(layer->id()));
     m_currentLayerIndex = layerIndex;
 
     emit layerCountChanged(layersCount());
-    return layer;
+    return layer.get();
 }
 
 int LayerManager::lastFrameAtFrame(int frameIndex) {
@@ -180,7 +179,7 @@ int LayerManager::lastKeyFrameIndex() {
 void LayerManager::deleteCurrentLayer() {
     m_editor->undoStack()->beginMacro("Delete layer");
     if (m_currentLayerIndex > -1 && m_currentLayerIndex < m_layers.size()) {
-        Layer* layer = m_layers[m_indices[m_currentLayerIndex]];
+        Layer* layer = m_layers[m_indices[m_currentLayerIndex]].get();
         QList<int> keys = layer->keys();
         keys.takeLast();
         for (int k : keys) m_editor->undoStack()->push(new RemoveKeyCommand(m_editor, m_currentLayerIndex, k));
@@ -191,7 +190,7 @@ void LayerManager::deleteCurrentLayer() {
 
 void LayerManager::deleteLayer(int layerIndex) {
     if (layerIndex > -1 && layerIndex < m_layers.size()) {
-        delete m_layers[m_indices[layerIndex]];
+        // delete m_layers[m_indices[layerIndex]];
         m_layers.remove(m_indices[layerIndex]);
         m_indices.removeAt(layerIndex);
     }
@@ -201,6 +200,28 @@ void LayerManager::deleteLayer(int layerIndex) {
     if (currentLayerIndex() == layersCount()) setCurrentLayer(currentLayerIndex() - 1);
 
     emit layerCountChanged(layersCount());
+}
+
+void LayerManager::destroyBuffers() {
+    for (auto layer : m_layers) {
+        for (auto it = layer->keysBegin(); it != layer->keysEnd(); ++it) {
+            it.value()->destroyBuffers();
+        }
+    }
+}
+
+void LayerManager::gotoNextLayer() {
+    if (m_currentLayerIndex < layersCount() - 1) {
+        m_currentLayerIndex += 1;
+        emit currentLayerChanged(m_currentLayerIndex);
+    }
+}
+
+void LayerManager::gotoPreviouslayer() {
+    if (m_currentLayerIndex > 0) {
+        m_currentLayerIndex -= 1;
+        emit currentLayerChanged(m_currentLayerIndex);
+    }
 }
 
 int LayerManager::maxFrame() {

@@ -1,13 +1,17 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "inbetweens.h"
 
 #include "stroke.h"
 #include "utils/geom.h"
+
+// Point::VectorType Inbetween::getWarpedPoint(Group *group, Point::VectorType p) const {
+//     int quadKey;
+//     Point::VectorType uv = getUV(group, p, quadKey);
+//     if (quadKey == INT_MAX) {
+//         qCritical() << "Error in inbetween getWarpedPoint (inbetween): invalid pos: " <<  p.x() << ", " << p.y();
+//         return p;
+//     }
+//     return getWarpedPoint(group, {quadKey, uv});
+// }
 
 // see lattice implementation
 bool Inbetween::quadContainsPoint(Group *group, QuadPtr quad, const Point::VectorType &p) const {
@@ -32,7 +36,7 @@ bool Inbetween::quadContainsPoint(Group *group, QuadPtr quad, const Point::Vecto
 // see lattice implementation
 bool Inbetween::contains(Group *group, const Point::VectorType &p, QuadPtr &quad, int &key) const {
     // TODO bounding box test before
-    for (auto it = group->lattice()->hash().constBegin(); it != group->lattice()->hash().constEnd(); ++it) {
+    for (auto it = group->lattice()->quads().constBegin(); it != group->lattice()->quads().constEnd(); ++it) {
         if (quadContainsPoint(group, it.value(), p)) {
             quad = it.value();
             key = it.key();
@@ -43,7 +47,7 @@ bool Inbetween::contains(Group *group, const Point::VectorType &p, QuadPtr &quad
 }
 
 // see lattice implementation
-Point::VectorType Inbetween::getUV(Group *group, const Point::VectorType &p,  int &quadKey) const {
+Point::VectorType Inbetween::getUV(Group *group, const Point::VectorType &p, int &quadKey) const {
     QuadPtr quad = nullptr;
     
     // check if the given point is in the grid, if so, in which quad?
@@ -88,6 +92,46 @@ Point::VectorType Inbetween::getUV(Group *group, const Point::VectorType &p,  in
 
     uv.y() = 1.0 - uv.y();
     return uv;
+}
+
+bool Inbetween::bakeForwardUV(Group *group, const Stroke *stroke, Interval &interval, UVHash &uvs) const {
+    if (stroke == nullptr) {
+        qWarning() << "cannot compute UVs for this interval: invalid stroke: " << stroke;
+        return false;
+    }
+
+    // overshoot if possible
+    QuadPtr q;
+    int k, from = interval.from(), to = interval.to();
+    bool isNextPointInLattice = to < stroke->size() - 1 && contains(group, stroke->points()[interval.to() + 1]->pos(), q, k);
+    if (isNextPointInLattice) {
+        to += 1;
+    } else if (to < stroke->size() - 1) {
+        interval.setOvershoot(false);
+    }
+
+    int key;
+    for (size_t i = from; i <= to; ++i) {
+        const Point::VectorType &pos = stroke->points()[i]->pos();
+        stroke->points()[i]->initId(stroke->id(), i);
+        UVInfo uv;
+        if (uvs.has(stroke->id(), i)) uv = uvs.get(stroke->id(), i);
+        uv.uv = getUV(group, pos, key);
+        uv.quadKey = key;
+        uvs.add(stroke->id(), i, uv);
+    }
+
+    return true;
+}
+/**
+ * Should be called in a valid OpenGL context!
+*/
+void Inbetween::clear() {
+    destroyBuffers();
+    strokes.clear();
+    backwardStrokes.clear();
+    corners.clear();
+    centerOfMass.clear();
 }
 
 /**
