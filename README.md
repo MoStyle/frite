@@ -2,9 +2,10 @@
 
 **Frite** is a non-linear 2D animation software developed as part of the [MoStyle ANR project](https://mostyle.github.io/) by Melvin Even, Pierre Bénard and Pascal Barla. 
 
-The animation system is described in the following publication:
+The animation system is described in the following publications:
 
-[Non-linear Rough 2D Animation using Transient Embeddings.](https://inria.hal.science/hal-04006992) Melvin Even, Pierre Bénard, Pascal Barla. Computer Graphics Forum (Eurographics), Wiley, 2023.
+- [Non-linear Rough 2D Animation using Transient Embeddings.](https://inria.hal.science/hal-04006992) Melvin Even, Pierre Bénard, Pascal Barla. Computer Graphics Forum (Eurographics), Wiley, 2023.
+- [Inbetweening with Occlusions for Non-Linear Rough 2D Animation.](https://inria.hal.science/hal-04797216) Melvin Even, Pierre Bénard, Pascal Barla. Research Report RR-9559, 2024.
  
 
 It is originally based on [Pencil2D](https://www.pencil2d.org/).
