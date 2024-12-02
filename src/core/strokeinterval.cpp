@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "strokeinterval.h"
 
 #include <QtGlobal>
@@ -27,7 +21,8 @@ void Intervals::append(const Interval &interval) {
     QMutableListIterator<Interval> it(*this);
     while (it.hasNext()) {
         Interval &nextInterval = it.next();
-        if (newInterval.intersects(nextInterval)) {
+        // qDebug() << "does " << interval.from() << ", " << interval.to() << "  intersects " << nextInterval.from() << ", " << nextInterval.to() << "   = " << newInterval.intersects(nextInterval);
+        if (newInterval.intersects(nextInterval) || newInterval.connected(nextInterval)) {
             newInterval.merge(nextInterval);
             m_nbPoints -= nextInterval.nbPoints();
             it.remove();
@@ -51,7 +46,35 @@ void Intervals::append(const Intervals &intervals) {
     }
 }
 
-// STROKEINTERVALS 
+bool Intervals::compare(const Intervals &other) const {
+    if (size() != other.size()) return false;
+    for (unsigned int i = 0; i < size(); ++i) {
+        if (!at(i).compare(other.at(i))) return false;
+    }
+    return true;
+}
+
+bool Intervals::containsPoint(unsigned int idx) const {
+    for (unsigned int i = 0; i < size(); ++i) {
+        if (at(i).contains(idx)) return true;
+    }
+    return false;
+}
+
+// STROKEINTERVALS
+
+bool StrokeIntervals::compare(const StrokeIntervals &other) const {
+    if (size() != other.size()) return false;
+    for (auto it = cbegin(); it != cend(); ++it) {
+        if (!other.contains(it.key()) || !it.value().compare(other.value(it.key()))) return false;
+    }
+    return true;
+}
+
+bool StrokeIntervals::containsPoint(unsigned int strokeId, unsigned int pointIdx) const {
+    if (!contains(strokeId)) return false;
+    return value(strokeId).containsPoint(pointIdx);
+}
 
 void StrokeIntervals::forEachPoint(const VectorKeyFrame *key, std::function<void(Point *)> func, unsigned int id) const {
     Stroke *stroke = key->stroke(id); 

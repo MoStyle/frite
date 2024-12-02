@@ -1,24 +1,16 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef __HALVESTOOL_H__
 #define __HALVESTOOL_H__
 
 #include "tool.h"
-#include "spacingtool.h"
+#include "charttool.h"
 
-class HalvesTool : public SpacingTool {
+class HalvesTool : public ChartTool {
     Q_OBJECT
 public:
     HalvesTool(QObject *parent, Editor *editor);
     virtual ~HalvesTool();
 
     virtual Tool::ToolType toolType() const override;
-
-    virtual QGraphicsItem *graphicsItem() override;
 
     virtual QCursor makeCursor(float scaling=1.0f) const override;
 

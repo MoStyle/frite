@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef CHARTITEM_H
 #define CHARTITEM_H
 
@@ -12,7 +6,7 @@
 #include <QPainter>
 
 class Editor;
-class KeyframedFloat;
+class KeyframedReal;
 class VectorKeyFrame;
 class Group;
 class ChartTickItem;
@@ -21,7 +15,8 @@ class Bezier2D;
 
 class ChartItem : public QGraphicsItem {
 public:
-    enum ChartMode : unsigned int { KEY, GROUP };
+    enum ChartMode : unsigned int { KEY=0, GROUP, PARTIAL, ONLYORDERPARTIAL, PROXY };
+    enum ProxyMode : unsigned int { INOROUT=0, INANDOUT };
 
     ChartItem(Editor *editor, VectorKeyFrame *keyframe, QPointF pos);
     ~ChartItem();
@@ -33,13 +28,17 @@ public:
     float length() const { return m_length; }
     VectorKeyFrame *keyframe() const { return m_keyframe; }
     ChartTickItem *controlTickAt(int idx) const { return m_controlTicks[idx]; }
+    ChartTickItem *partialTickAt(int idx) const { return m_partialTicks[idx]; }
     unsigned int nbTicks() const { return m_nbTicks; }
     unsigned int nbFixedTicks() const;
     unsigned int nbGhostTicks() const { return nbTicks() - nbFixedTicks(); };
+    unsigned int nbPartialsTicks() const { return m_partialTicks.size(); }
     Curve *spacing() const { return m_spacing; }
+    ChartMode chartMode() const { return m_mode; }
 
     void refresh(VectorKeyFrame *keyframe);
     void updateSpacing(int tickIdx, bool refreshAllTicks=false);
+    void updateSpacingProxy(ProxyMode mode);
     void resetControlTicks();
     void setChartMode(ChartMode mode);
 
@@ -71,6 +70,8 @@ private:
 
     VectorKeyFrame *m_keyframe;             // keyframe that contains the displayed spacing
     QList<ChartTickItem *> m_controlTicks;  // 
+    QList<ChartTickItem *> m_partialTicks;  // 
+    QList<ChartTickItem *> m_proxyTicks;    // 
     Curve *m_spacing;                       // animation curve of the spacing (1D monotonic cubic spline)
 };
 

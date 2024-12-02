@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "test.h"
 
 #include "vectorkeyframe.h"
@@ -24,18 +18,17 @@ void Test::sampleGridCornerTrajectory(Group *group, Lattice *grid, Corner *corne
     }
 }
 
-Point::Scalar Test::evalCornerTrajectoryArcLength(Group *group, Lattice *grid, Corner *corner, std::vector<double> &outDiffs) {
+Point::Scalar Test::evalCornerTrajectoryArcLength(Group *group, Lattice *grid, Corner *corner, std::vector<double>&outDiffs) {
     std::vector<Point::VectorType> trajPoly;
-    const unsigned int SAMPLES = 100;
+    const unsigned int SAMPLES = 100; 
     sampleGridCornerTrajectory(group, grid, corner, SAMPLES, trajPoly);
 
     std::vector<double> cumLength(trajPoly.size());
     for (int i = 0; i < trajPoly.size(); ++i) {
-        if (i == 0)
-            cumLength[0] = 0.0;
+        if (i == 0) cumLength[0] = 0.0;
         else {
-            Point::VectorType diff = trajPoly[i] - trajPoly[i - 1];
-            cumLength[i] = cumLength[i - 1] + diff.norm();
+            Point::VectorType diff = trajPoly[i] - trajPoly[i-1];
+            cumLength[i] = cumLength[i-1] + diff.norm();
         }
     }
 
@@ -67,11 +60,11 @@ void Test::test(Group *group, Lattice *grid) {
     int diffSize = diffs[0].size();
     for (int i = 0; i < diffSize; ++i) {
         // double t_group = group->spacingAlpha(((double)i) / ((double)diffSize-1));
-        key->spacing()->frameChanged(((double)i) / ((double)diffSize - 1));
+        key->spacing()->frameChanged(((double)i) / ((double)diffSize-1));
         double t_key = key->spacing()->get();
         std::cout << "* T= " << t_key << ": " << std::endl;
         for (int j = 0; j < diffs.size(); ++j) {
             std::cout << "     " << diffs[j][i] << std::endl;
         }
-    }
+    } 
 }

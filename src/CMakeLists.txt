@@ -17,9 +17,10 @@ if( APPLE )
   file(GLOB_RECURSE frite_M "*.mm")
 endif()
 
-QT6_ADD_RESOURCES(frite_RCC images.qrc shaders.qrc)
+qt_add_resources(frite_RCC shaders.qrc fonts.qrc)
+qt_add_big_resources(frite_BIG_RCC images.qrc)
 
-list(APPEND frite_Sources ${frite_CPP} ${frite_M} ${frite_H} ${frite_RCC})
+list(APPEND frite_Sources ${frite_CPP} ${frite_M} ${frite_H} ${frite_RCC} ${frite_BIG_RCC})
 
 if( APPLE )
   set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/modules/")
@@ -44,8 +45,10 @@ add_executable(frite MACOSX_BUNDLE ${frite_Sources})
 target_link_libraries(frite
   PUBLIC
   Qt6::Widgets Qt6::Xml Qt6::Svg Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Core5Compat
+  Clipper::clipper
+  Libtess2::libtess2
+  QuaZip::QuaZip
   Cpd::cpd Fgt::fgt
-  nanoflann::nanoflann
   Eigen3::Eigen
   OpenGL::GL
 )

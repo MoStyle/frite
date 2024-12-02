@@ -1,13 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2012-2014 Matthew Chiawen Chang
- * SPDX-FileCopyrightText: 2018-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
-
 #include "toolsmanager.h"
 #include "canvascommands.h"
 #include "layermanager.h"
@@ -23,6 +13,7 @@
 #include "tools/warptool.h"
 #include "tools/strokedeformtool.h"
 #include "tools/registrationlassotool.h"
+#include "tools/maskpentool.h"
 #include "tools/correspondencetool.h"
 #include "tools/trajectorytool.h"
 #include "tools/drawtrajectorytool.h"
@@ -31,6 +22,19 @@
 #include "tools/directmatchingtool.h"
 #include "tools/moveframestool.h"
 #include "tools/halvestool.h"
+#include "tools/spacingproxytool.h"
+#include "tools/pivottool.h"
+#include "tools/pivotcreationtool.h"
+#include "tools/pivottangenttool.h"
+#include "tools/pivotrotationtool.h"
+#include "tools/pivotscalingtool.h"
+#include "tools/pivottranslationtool.h"
+#include "tools/grouporderingtool.h"
+#include "tools/movepartialstool.h"
+#include "tools/localmasktool.h"
+#include "tools/pickstrokestool.h"
+#include "tools/visibilitytool.h"
+#include "tools/debugtool.h"
 
 ToolsManager::ToolsManager(QObject *pParent) : BaseManager(pParent) {
     m_previousTool = nullptr;
@@ -51,7 +55,7 @@ void ToolsManager::initTools() {
     m_tools[Tool::Warp]              = new WarpTool(this, m_editor);
     m_tools[Tool::StrokeDeform]      = new StrokeDeformTool(this, m_editor);
     m_tools[Tool::RegistrationLasso] = new RegistrationLassoTool(this, m_editor);
-    m_tools[Tool::Scribble]          = nullptr;
+    m_tools[Tool::MaskPen]           = new MaskPenTool(this, m_editor);
     m_tools[Tool::Traj]              = new TrajectoryTool(this, m_editor);
     m_tools[Tool::DrawTraj]          = new DrawTrajectoryTool(this, m_editor);
     m_tools[Tool::TrajTangent]       = new TangentTool(this, m_editor);
@@ -59,11 +63,27 @@ void ToolsManager::initTools() {
     m_tools[Tool::Correspondence]    = new CorrespondenceTool(this, m_editor);
     m_tools[Tool::FillGrid]          = new FillGridTool(this, m_editor);
     m_tools[Tool::DirectMatching]    = new DirectMatchingTool(this, m_editor);
+    m_tools[Tool::PivotCreation]     = new PivotCreationTool(this, m_editor);
+    m_tools[Tool::PivotEdit]         = new PivotEditTool(this, m_editor);
+    m_tools[Tool::PivotTangent]      = new PivotTangentTool(this, m_editor);
+    m_tools[Tool::PivotRotation]     = new PivotRotationTool(this, m_editor);
+    m_tools[Tool::PivotScaling]      = new PivotScalingTool(this, m_editor);
+    m_tools[Tool::PivotTranslation]  = new PivotTranslationTool(this, m_editor);
     m_tools[Tool::MoveFrames]        = new MoveFramesTool(this, m_editor);
     m_tools[Tool::Halves]            = new HalvesTool(this, m_editor);
     m_tools[Tool::SimplifySpacing]   = nullptr;
+    m_tools[Tool::ProxySpacing]      = new SpacingProxyTool(this, m_editor);
+    m_tools[Tool::MovePartials]      = new MovePartialsTool(this, m_editor);
+    m_tools[Tool::GroupOrdering]     = new GroupOrderingTool(this, m_editor);
+    m_tools[Tool::LocalMask]         = new LocalMaskTool(this, m_editor);
+    m_tools[Tool::CopyStrokes]       = new PickStrokesTool(this, m_editor);
+    m_tools[Tool::Visibility]        = new VisibilityTool(this, m_editor);
+    m_tools[Tool::Debug]             = new DebugTool(this, m_editor);
 
     connect(m_tools[Tool::Pen], &Tool::updateFrame, m_editor->tabletCanvas(), &TabletCanvas::updateCurrentFrame);
+    // connect(m_editor, &Editor::currentFrameChanged, m_tools[Tool::GroupOrdering], &GroupOrderingTool::frameChanged);
+    connect(m_editor, SIGNAL(currentFrameChanged(int)), m_tools[Tool::GroupOrdering], SLOT(frameChanged(int)));
+
 
     setTool(Tool::Pen);
 }
@@ -89,7 +109,7 @@ void ToolsManager::signalToWindow(Tool::ToolType toolType) {
         case Tool::DrawTraj:            emit drawTrajectorySelected(); break;
         case Tool::TrajTangent:         emit tangentSelected(); break;
         case Tool::Lasso:               emit lassoSelected(); break;
-        case Tool::Scribble:            emit scribbleSelected(); break;
+        case Tool::MaskPen:             emit maskPenSelected(); break;
         case Tool::RigidDeform:         emit deformSelected(); break;
         case Tool::Warp:                emit warpSelected(); break;
         case Tool::StrokeDeform:        emit strokeDeformSelected(); break;
@@ -97,9 +117,22 @@ void ToolsManager::signalToWindow(Tool::ToolType toolType) {
         case Tool::Correspondence:      emit correspondenceSelected(); break;
         case Tool::FillGrid:            emit fillGridSelected(); break;
         case Tool::DirectMatching:      emit directMatchingSelected(); break;
+        case Tool::PivotCreation:       emit pivotCreationSelected(); break;
+        case Tool::PivotEdit:           emit pivotEditSelected(); break;
+        case Tool::PivotTangent:        emit pivotTangentSelected(); break;
+        case Tool::PivotRotation:       emit pivotRotationSelected(); break;
+        case Tool::PivotScaling:        emit pivotScalingSelected(); break;
+        case Tool::PivotTranslation:    emit pivotTranslationSelected(); break;
         case Tool::MoveFrames:          emit moveFramesSelected(); break;
         case Tool::Halves:              emit halvesSelected(); break;
         case Tool::SimplifySpacing:     emit simplifySpacingSelected(); break;
+        case Tool::ProxySpacing:        emit proxySpacingSelected(); break;
+        case Tool::MovePartials:        emit movePartialsSelected(); break;
+        case Tool::GroupOrdering:       emit groupOrderingSelected(); break;
+        case Tool::LocalMask:           emit localMaskSelected(); break;
+        case Tool::CopyStrokes:         emit pickStrokesSelected(); break;
+        case Tool::Visibility:          emit visibilitySelected(); break;
+        case Tool::Debug:               emit debugSelected(); break;
         default:                        qWarning() << "No signal found for this tool (" << toolType << ")"; break;
     }
 }

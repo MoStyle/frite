@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 
-project(frite VERSION 1.0)
+project(frite VERSION 0.1.2)
 
 if(NOT CMAKE_BUILD_TYPE)
 set(CMAKE_BUILD_TYPE Release CACHE STRING
@@ -17,8 +17,8 @@ set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 include(cmake/eigen.cmake)
 include(cmake/fgt.cmake)
 include(cmake/cpd.cmake)
-include(cmake/nanoflann.cmake)
-
-unset(EXECUTABLE_OUTPUT_PATH CACHE)
+include(cmake/clipper2.cmake)
+include(cmake/libtess2.cmake)
+include(cmake/quazip.cmake)
 
 add_subdirectory(src)

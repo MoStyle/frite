@@ -1,10 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2018-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef GRIDMANAGER_H
 #define GRIDMANAGER_H
 
@@ -16,9 +9,8 @@
 #include "layer.h"
 #include "corner.h"
 #include "lattice.h"
+#include "nanoflann.h"
 #include "nanoflann_datasetadaptor.h"
-
-#include <nanoflann.hpp>
 
 using namespace Eigen;
 
@@ -35,10 +27,19 @@ public :
     GridManager(QObject* pParent);
 
     // Construction
-    bool constructGrid(Group *group, ViewManager *view);
+    bool constructGrid(Group *group, ViewManager *view, unsigned int cellSize);
     bool constructGrid(Group *group, ViewManager *view, Stroke *stroke, Interval &interval);
-    void bakeStrokeInGrid(Lattice *grid, Stroke *stroke, int fromIdx, int toIdx, PosTypeIndex type=REF_POS);
-    std::pair<int, int> addStrokeToDeformedGrid(Lattice *grid, Stroke *stroke);
+    bool addStrokeToGrid(Group *group, Stroke *stroke, Interval &interval);
+    bool addStrokeToGrid(Group *group, Stroke *stroke, Intervals &intervals);
+    bool bakeStrokeInGrid(Lattice *grid, Stroke *stroke, int fromIdx, int toIdx, PosTypeIndex type=REF_POS, bool forward=true);
+    void bakeStrokeInGrid(Group *group, Lattice *grid, Stroke *stroke, int fromIdx, int toIdx, const Inbetween &inbetween, bool forward=true);
+    void bakeStrokeInGridPrecomputed(Lattice *grid, Group *group, Stroke *stroke, int fromIdx, int toIdx, PosTypeIndex type=REF_POS, bool forward=true);
+    bool bakeStrokeInGridWithConnectivityCheck(Lattice *grid, Stroke *stroke, int fromIdx, int toIdx, PosTypeIndex type=REF_POS, bool forward=true);
+    std::pair<int, int> expandTargetGridToFitStroke(Lattice *grid, Stroke *stroke, bool removeExtremities=true, int from=0, int to=-1);
+    bool expandTargetGridToFitStroke(Group *group, const StrokeIntervals &intervals, StrokeIntervals &added, StrokeIntervals &notAdded);
+    std::pair<int, int> expandTargetGridToFitStroke2(Lattice *grid, Stroke *stroke, bool removeExtremities=true, int from=0, int to=-1);
+    bool expandGridToFitStroke(Group *group, const Inbetween &inbetween, int inbetweenNumber, int stride, Lattice *grid, Stroke *stroke);
+    void retrocomp(Group *group);
 
     // Deformation
     Corner* selectedCorner() { return m_selectedCorner; }
@@ -48,8 +49,8 @@ public :
     void moveGridCorner(Group* group, PosTypeIndex type, const Point::VectorType &delta, bool rot, Point::Affine &transformation);
     void moveGridCornerPosition(Group* group, PosTypeIndex type, const Point::VectorType &pos);
     void releaseGridCorner(Group* group);
-    void scaleGrid(Group *group, float factor, PosTypeIndex type);
-    void scaleGrid(Group *group, float factor, PosTypeIndex type, const std::vector<Corner *> &corners);
+    void scaleGrid(Group *group, float factor, PosTypeIndex type, int mode=0);
+    void scaleGrid(Group *group, float factor, PosTypeIndex type, const std::vector<Corner *> &corners, int mode=0);
 
     void addOneRing(Lattice *grid, std::vector<int> &newQuadsKeys);
     void propagateDeformToOneRing(Lattice *grid, const std::vector<int> &oneRing);    
@@ -58,10 +59,8 @@ public slots:
     void setDeformRange(int k);
 
 private:
-    bool addStrokeToGrid(Group *group, Stroke *stroke, Interval &interval);
-    void propagateDeformToNewQuads(Lattice *grid, std::vector<QuadPtr> &newQuads);    
+    void propagateDeformToNewQuads(Group *group, Lattice *grid, std::vector<QuadPtr> &newQuads);    
     void propagateDeformToConnectedComponent(Lattice *grid, const std::vector<int> &quads);    
-    bool needRefinement(Lattice *grid, Point::VectorType &prevPoint, Point::VectorType &curPoint, int &quadKeyOut);
 
     int m_deformRange;
     bool m_deformed;

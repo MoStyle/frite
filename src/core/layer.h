@@ -1,13 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2012-2014 Matthew Chiawen Chang
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
-
 #ifndef LAYER_H
 #define LAYER_H
 
@@ -15,21 +5,21 @@
 #include <QDomElement>
 
 #include "point.h"
+#include "bezier2D.h"
 
 class KeyFrame;
 class TimeLineCells;
 class VectorKeyFrame;
 class Editor;
 class KeyframedVector;
-class KeyframedFloat;
+class KeyframedReal;
 
 typedef QMap<int, VectorKeyFrame*>::const_iterator keyframe_iterator;
 typedef QPair<int, int> KeyframeGroup; // keyframeId, groupId
 
-class Layer : public QObject {
-    Q_OBJECT
+class Layer{
    public:
-    Layer(QObject* parent, Editor* editor);
+    Layer(Editor* editor);
     virtual ~Layer();
 
     bool load(QDomElement& element, const QString& path);
@@ -51,6 +41,9 @@ class Layer : public QObject {
 
     void switchShowOnion() { m_showOnion = !m_showOnion; }
     bool showOnion() { return m_showOnion; }
+
+    void switchHasMask() { m_hasMask = !m_hasMask; }
+    bool hasMask() const { return m_hasMask; };
 
     qreal opacity() const { return m_opacity; }
     void setOpacity(qreal opacity) { m_opacity = opacity; }
@@ -91,17 +84,51 @@ class Layer : public QObject {
     int getNextFrameNumber(int position, bool keyMode);
 
     void insertKeyFrame(int frame, VectorKeyFrame* keyframe);
+    void removeKeyFrameWithoutDisplacement(int frame);
     void removeKeyFrame(int frame);
     void moveKeyFrame(int oldFrame, int newFrame);
 
+    void addSelectedKeyFrame(int frame);
+    void removeSelectedKeyFrame(VectorKeyFrame * keyFrame);
+    void sortSelectedKeyFrames();
+    void clearSelectedKeyFrame();
+    bool selectedKeyFrameIsEmpty();
+    int getFirstKeyFrameSelected();
+    int getLastKeyFrameSelected();
+    bool isVectorKeyFrameSelected(VectorKeyFrame * keyFrame);
+    void insertSelectedKeyFrame(int layerNumber, int newFrame, int n = 1);
+    QVector<VectorKeyFrame *> getSelectedKeyFrames() const {return m_selectedKeyFrames;};
+    QVector<VectorKeyFrame *> getSelectedKeyFramesWithDefault();
+    bool isSelectionTranslationExtracted();
+    bool isSelectionRotationExtracted();
+
     QList<int> keys() const { return m_keyFrames.keys(); }
     Editor *editor() const { return m_editor; }
+
+    Point::VectorType getPivotPosition(int frame);
+    void addPointToPivotCurve(int frame, Point::VectorType point);
+    void translatePivot(int frame, Point::VectorType translation);
+    void deletePointFromPivotCurve(int frame);
+    Point::VectorType getPivotControlPoint(int frame);
+    CompositeBezier2D * getPivotCurves() { return &m_pivotCurves; };
+
+    void addVectorKeyFrameTranslation(int frame, Point::VectorType translationToAdd, bool updatePreviousPivot = true);
+    void extractPivotTranslation(QVector<VectorKeyFrame *> keyFrames);
+    void insertPivotTranslation(QVector<VectorKeyFrame *> keyFrames);
+    void getMatchingRotation(QVector<VectorKeyFrame *> keyFrames, QVector<float> &dst);
+    void extractPivotRotation(QVector<VectorKeyFrame *> keyFrames, QVector<float> &angles);
+    void insertPivotRotation(QVector<VectorKeyFrame *> keyFrames);
+
+    float getFrameTValue(int frame){
+        return frame < getMaxKeyFramePosition() ? float (frame - 1) / (getMaxKeyFramePosition() - 1) : 1.f; 
+    };
 
     QColor color = Qt::black;
 
    private:
     QMap<int, VectorKeyFrame*> m_keyFrames;
     QMap<int, VectorKeyFrame*> m_backup;
+    QVector<VectorKeyFrame *> m_selectedKeyFrames;
 
     QRect topRect(TimeLineCells* cells, int frameNumber, int y);
     QRect bottomRect(TimeLineCells* cells, int frameNumber, int y, int length);
@@ -111,6 +138,7 @@ class Layer : public QObject {
     QString m_name;
     bool m_visible;
     bool m_showOnion;
+    bool m_hasMask;
     qreal m_opacity;
 
     int m_frameClicked;
@@ -119,6 +147,7 @@ class Layer : public QObject {
     int m_backupClickedFrame;
 
     Editor* m_editor;
+    CompositeBezier2D m_pivotCurves;
 
     const int m_squareSize = 6;
 };

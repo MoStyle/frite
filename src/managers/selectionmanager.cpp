@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "selectionmanager.h"
 #include "playbackmanager.h"
 #include "layermanager.h"
@@ -12,12 +6,19 @@
 #include "canvascommands.h"
 
 // Fill the paramater "selectedGroups" with all groups intersecting the polygon "bounds"
-void SelectionManager::selectGroups(VectorKeyFrame *key, float alpha, unsigned int groupType, const QPolygonF &bounds, bool useFilter, std::vector<int> &selectedGroups) const {
+void SelectionManager::selectGroups(VectorKeyFrame *key, qreal alpha, unsigned int inbetween, unsigned int groupType, const QPolygonF &bounds, bool useFilter, std::vector<int> &selectedGroups) const {
     GroupList &groupList = groupType == POST ? key->postGroups() : key->preGroups();
-    const QHash<int, Group *> &filter = groupType == POST ? key->selection().selectedPostGroups() : key->selection().selectedPreGroups();
-    for (Group * group : groupList) {
-        if (useFilter && filter.contains(group->id())) continue;
-        if (bounds.intersects(group->cbounds())) {
+    QPolygonF transformedBounds;
+    Point::Affine A = key->rigidTransform(alpha).inverse();
+    const Inbetween &inb = key->inbetween(inbetween);
+    for (QPointF point : bounds){
+        Point::VectorType transformedPoint = A * Point::VectorType(point.x(), point.y());
+        transformedBounds << QPointF(transformedPoint.x(), transformedPoint.y());
+    }
+    const QMap<int, Group *> &filter = groupType == POST ? key->selection().selectedPostGroups() : key->selection().selectedPreGroups();
+    for (Group *group : groupList) {
+        if (useFilter && filter.contains(group->id()) || group->strokes().empty() || !inb.aabbs.contains(group->id())) continue;
+        if (transformedBounds.intersects(inb.aabbs.value(group->id()))) {
             selectedGroups.push_back(group->id());
         }    
     }
@@ -31,12 +32,16 @@ void SelectionManager::selectGroups(VectorKeyFrame *key, float alpha, unsigned i
  * @param useFilter     whether or not to use the current group filter
  * @return the id of the first group that contains pickPos
  */
-int SelectionManager::selectGroups(VectorKeyFrame *key, float alpha, unsigned int groupType, const QPointF &pickPos, bool useFilter) const {
+int SelectionManager::selectGroups(VectorKeyFrame *key, qreal alpha, unsigned int inbetween, unsigned int groupType, const QPointF &pickPos, bool useFilter) const {
     GroupList &groupList = groupType == POST ? key->postGroups() : key->preGroups();
-    const QHash<int, Group *> &filter = groupType == POST ? key->selection().selectedPostGroups() : key->selection().selectedPreGroups();
-    for (Group * group : groupList) {
-        if (useFilter && filter.contains(group->id())) continue;
-        if (group->cbounds().contains(pickPos)) {
+    const QMap<int, Group *> &filter = groupType == POST ? key->selection().selectedPostGroups() : key->selection().selectedPreGroups();
+    Point::Affine A = key->rigidTransform(alpha).inverse();
+    Point::VectorType transformedPoint = A * Point::VectorType(pickPos.x(), pickPos.y());
+    QPointF pickPosTransformed(transformedPoint.x(), transformedPoint.y());
+    const Inbetween &inb = key->inbetween(inbetween);
+    for (Group *group : groupList) {
+        if (useFilter && filter.contains(group->id()) || group->strokes().empty() || !inb.aabbs.contains(group->id())) continue;
+        if (inb.aabbs.value(group->id()).contains(pickPosTransformed)) {
             return group->id();
         }    
     }
@@ -122,17 +127,21 @@ void SelectionManager::selectStrokeSegments(VectorKeyFrame *keyframe, const QPol
 }
 
 void SelectionManager::selectStrokes(VectorKeyFrame *keyframe, std::function<bool(const StrokePtr &stroke)> predicate, std::vector<int> &strokesIdx) {
-    for (const StrokePtr &stroke : keyframe->strokes()) {
-        if (predicate(stroke)) strokesIdx.push_back(stroke->id());
-    }
+    selectStrokes(keyframe, 0, predicate, strokesIdx);
 }
 
-void SelectionManager::selectStrokes(VectorKeyFrame *keyframe, std::function<bool(const StrokePtr &stroke)> predicate, StrokeIntervals &selection) {
-    for (const StrokePtr &stroke : keyframe->strokes()) {
+void SelectionManager::selectStrokes(VectorKeyFrame *keyframe, unsigned int inbetween, std::function<bool(const StrokePtr &stroke)> predicate, StrokeIntervals &selection) {
+    for (const StrokePtr &stroke : keyframe->inbetween(inbetween).strokes) {
         if (predicate(stroke)) {
             selection[stroke->id()].clear();
             selection[stroke->id()].append(Interval(0, stroke->size() - 1));
         }
+    }
+}
+
+void SelectionManager::selectStrokes(VectorKeyFrame *keyframe, unsigned int inbetween, std::function<bool(const StrokePtr &stroke)> predicate, std::vector<int> &strokesIdx) {
+    for (const StrokePtr &stroke : keyframe->inbetween(inbetween).strokes) {
+        if (predicate(stroke)) strokesIdx.push_back(stroke->id());
     }
 }
 

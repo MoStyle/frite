@@ -1,13 +1,9 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "grouplist.h"
 #include "group.h"
+#include "grouporder.h"
+#include "vectorkeyframe.h"
 
-GroupList::GroupList(GroupType type, VectorKeyFrame *parentKeyFrame) : m_gIdx(0), m_lastIdx(-1), m_type(type), m_parentKeyFrame(parentKeyFrame) {
+GroupList::GroupList(GroupType type, VectorKeyFrame *parentKeyFrame) : m_gIdx(0), m_lastIdx(-2), m_type(type), m_parentKeyFrame(parentKeyFrame) {
     if (m_type == POST) {
         add(new Group(m_parentKeyFrame, QColor(Qt::black), MAIN));
     }
@@ -26,7 +22,7 @@ Group *GroupList::add(bool forceAdd) {
     Group *group = new Group(m_parentKeyFrame, m_type);
     insert(group->id(), group);
     m_lastIdx = group->id();
-    m_gIdx++;
+    if (m_type == POST) m_parentKeyFrame->groupOrder().add(group->id());
     return group;
 }
 
@@ -35,7 +31,7 @@ Group *GroupList::add(QColor color) {
     Group *group = new Group(m_parentKeyFrame, color, m_type);
     insert(group->id(), group);
     m_lastIdx = group->id();
-    m_gIdx++;
+    if (m_type == POST) m_parentKeyFrame->groupOrder().add(group->id());
     return group;
 }
 
@@ -53,7 +49,7 @@ Group *GroupList::add(Group *group, bool replace) {
 
     insert(group->id(), group);
     m_lastIdx = group->id();
-    m_gIdx++;
+    if (m_type == POST && !replace) m_parentKeyFrame->groupOrder().add(group->id());
     return group;
 }
 
@@ -61,6 +57,8 @@ Group *GroupList::removeGroup(int id) {
     if (id == -1 || !contains(id)) return nullptr;
     Group *group = value(id);
     remove(id);
+    if (m_type == POST) m_parentKeyFrame->groupOrder().remove(group->id());
+    if (m_lastIdx == id) m_lastIdx = -2;
     return group;
 }
 

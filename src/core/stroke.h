@@ -1,10 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef STROKE_H
 #define STROKE_H
 
@@ -34,7 +27,7 @@ class Group;
 
 class Stroke {
    public:
-    Stroke(unsigned int id, const QColor &c, double thickness = 1.5, bool _isScribble = false);
+    Stroke(unsigned int id, const QColor &c, double thickness = 1.5, bool _isInvisible = false);
     Stroke(const Stroke &s);
     Stroke(const Stroke &s, unsigned int id, int from, int to);
     ~Stroke();
@@ -44,26 +37,27 @@ class Stroke {
     Frite::Polyline &polyline() { return m_points; }
     const Frite::Polyline &polyline() const { return m_points; }
     QColor color() const { return m_color; }
-    bool isScribble() const { return m_isScribble; }
+    bool isInvisible() const { return m_isInvisible; }
     double strokeWidth() const { return m_strokeWidth; }
     void setStrokeWidth(double width) { m_strokeWidth = width; }
     Point::Scalar length() const;
+    Point::Scalar length(int from, int to) const;
     size_t size() const { return m_points.pts().size(); }
     unsigned int id() const { return m_id; }
     int canHashId() const { return m_canHashId; }
     void resetID(unsigned int id) { m_id = id; }
 
     // OpenGL stuff
-    void createBuffers(QOpenGLShaderProgram *program);
+    void createBuffers(QOpenGLShaderProgram *program, VectorKeyFrame *keyframe);
     void destroyBuffers();
-    void updateBuffer();
+    void updateBuffer(VectorKeyFrame *keyframe);
     void render(GLenum mode, QOpenGLFunctions *functions);
     void render(GLenum mode, QOpenGLFunctions *functions, const Interval &interval, bool overshoot);
     bool buffersCreated() const { return m_bufferCreated; }
 
     void addPoint(Point *point);
     void setColor(const QColor &color) { m_color = color; }
-    void setPolyline(const Frite::Polyline &polyline) { m_points = polyline; }
+    void setPolyline(const Frite::Polyline &polyline) { m_points = polyline; m_centroidDirty = true; }
     void setCanHashId(int id) { m_canHashId = id; }
 
     void load(QTextStream &posStream, size_t size);
@@ -82,12 +76,17 @@ class Stroke {
         return resampledStroke;
     }
 
-    inline Point::VectorType centroid() const {
+    void smoothPressure() { m_points.smoothPressure(); }
+
+    inline Point::VectorType centroid() {
+        if (!m_centroidDirty) return m_centroid;
         Point::VectorType center = Point::VectorType::Zero();
         for (Point *point : m_points.pts()) {
             center += point->pos();
         }
-        return center / m_points.size();
+        m_centroid = center / m_points.size();
+        m_centroidDirty = false;
+        return m_centroid;
     }
 
     inline void transform(const Eigen::Affine2d &T) {
@@ -102,12 +101,17 @@ class Stroke {
     // stroke properties
     QColor m_color;
     double m_strokeWidth;
-    bool m_isScribble;
+    bool m_isInvisible;
     QPolygonF m_outline;
+    Point::VectorType m_centroid;
+    bool m_centroidDirty;
 
     // buffers
     QOpenGLVertexArrayObject m_vao;
     QOpenGLBuffer m_vbo, m_ebo;
+
+    QOpenGLVertexArrayObject m_vaoPoints;
+    QOpenGLBuffer m_vboPoints, m_eboPoints;
     bool m_bufferCreated, m_bufferDestroyed;
 
     unsigned int m_id;

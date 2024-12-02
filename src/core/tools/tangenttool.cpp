@@ -1,12 +1,6 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "tangenttool.h"
 
-#include "canvasscenemanager.h"
+
 #include "playbackmanager.h"
 #include "layermanager.h"
 #include "tabletcanvas.h"
@@ -26,10 +20,6 @@ Tool::ToolType TangentTool::toolType() const {
     return Tool::TrajTangent;
 }
 
-QGraphicsItem *TangentTool::graphicsItem() {
-    return nullptr;
-}
-
 QCursor TangentTool::makeCursor(float scaling) const {
     return QCursor(Qt::ArrowCursor);
 }
@@ -41,7 +31,6 @@ void TangentTool::toggled(bool on) {
     VectorKeyFrame *keyframe = layer->getLastVectorKeyFrameAtFrame(currentFrame, 0);
     if (keyframe->selectedGroup() != nullptr) {
         for (Group *group : keyframe->selection().selectedPostGroups()) group->setShowGrid(on);
-        m_editor->scene()->selectedGroupChanged(on ? QHash<int, Group *>() : keyframe->selection().selectedPostGroups());
         m_editor->tabletCanvas()->updateCurrentFrame();
     }
 }
@@ -120,7 +109,7 @@ void TangentTool::wheel(const WheelEventInfo& info) {
 
 }
 
-void TangentTool::draw(QPainter &painter, VectorKeyFrame *key) {
+void TangentTool::drawUI(QPainter &painter, VectorKeyFrame *key) {
     static QPen pen(QColor(200, 200, 200), 2.0);
     Layer *layer = key->parentLayer();
     int stride = layer->stride(layer->getVectorKeyFramePosition(key));

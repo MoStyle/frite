@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "trajectory.h"
 
 #include "vectorkeyframe.h"
@@ -24,7 +18,7 @@ Trajectory::Trajectory(VectorKeyFrame *keyframe, Group *group, const UVInfo &lat
     if (m_group != nullptr) m_grid = m_group->lattice();
     m_curve = std::make_unique<KeyframedVector>("Trajectory");    
     m_curve->setInterpolation("Trajectory", Curve::HERMITE_INTERP);
-    m_offset = std::make_unique<KeyframedFloat>("Local offset");
+    m_offset = std::make_unique<KeyframedReal>("Local offset");
     m_offset->setInterpolation("Local offset", Curve::SPLINE_INTERP);
     m_offset->set(0.0);
     m_offset->addKey("Local offset", 0.0);
@@ -53,7 +47,7 @@ Trajectory::Trajectory(const Trajectory &other)
       m_approxPathHullItem(other.m_approxPathHullItem) {
     m_curve = std::make_unique<KeyframedVector>("Trajectory");    
     m_curve->setInterpolation("Trajectory", Curve::HERMITE_INTERP);
-    m_offset = std::make_unique<KeyframedFloat>("Local offset");
+    m_offset = std::make_unique<KeyframedReal>("Local offset");
     m_offset->setInterpolation("Local offset", Curve::SPLINE_INTERP);
     m_offset->set(0.0);
     m_offset->addKey("Local offset", 0.0);
@@ -72,14 +66,14 @@ void Trajectory::sampleTrajectory() {
     // fit cubic to arap interpolation (with respect to the arap interpolation parameterization!)
     std::vector<Point::VectorType> data;
     std::vector<Point::Scalar> u;
-    float alpha;
+    qreal alpha;
 
     if (m_grid->isArapPrecomputeDirty()) m_grid->precompute();
 
     for (int i = 0; i < 12; ++i) {
         alpha = (float) i / 11.0f;
         float remappedAlpha = m_group->spacingAlpha(alpha);
-        m_grid->interpolateARAP(alpha, remappedAlpha, m_keyframe->rigidTransform(alpha), false);
+        m_grid->interpolateARAP(alpha, remappedAlpha, m_group->globalRigidTransform(alpha), false);
         u.push_back(remappedAlpha);
         data.push_back(m_grid->getWarpedPoint(Point::VectorType::Zero(), m_latticeCoord.quadKey, m_latticeCoord.uv, INTERP_POS));
     }
@@ -102,7 +96,7 @@ void Trajectory::sampleTrajectory() {
     for (int i = 1; i < k_trajectoryMinRes; ++i) {
         alpha = (float) i / (float) k_trajectoryMinRes;
         remappedAlpha = m_group->spacingAlpha(alpha);
-        m_grid->interpolateARAP(alpha, remappedAlpha, m_keyframe->rigidTransform(alpha), false);
+        m_grid->interpolateARAP(alpha, remappedAlpha, m_group->globalRigidTransform(alpha), false);
         m_curve->set(m_grid->getWarpedPoint(Point::VectorType::Zero(), m_latticeCoord.quadKey, m_latticeCoord.uv, INTERP_POS));
         m_curve->addKey("Trajectory", alpha);
     }
@@ -175,7 +169,7 @@ void Trajectory::adjustLocalOffsetFromParent() {
         x = m_group->spacing()->curve()->point(i).x();
         spacingParent = parentGroup->spacing()->curve()->point(i).y();
         spacingGroup = m_group->spacing()->curve()->point(i).y();
-        m_offset->curve()->setKeyframe(Eigen::Vector2f(x, spacingParent - spacingGroup), i);
+        m_offset->curve()->setKeyframe(Eigen::Vector2d(x, spacingParent - spacingGroup), i);
     }
 }
 
@@ -199,20 +193,21 @@ void Trajectory::adjustLocalOffsetFromContuinityConstraint() {
     Point::VectorType newTangent = (tangentCurProxy + tangentNextProxy) * 0.5;
     curProxy.setP2(curProxy.getP3() - (newTangent.cwiseProduct(Point::VectorType(1.0 / curCurve->nbPoints(), 1.0 / m_cubicApprox.length()))));
     nextProxy.setP1(curProxy.getP0() + (newTangent.cwiseProduct(Point::VectorType(1.0 / nextCurve->nbPoints(), 1.0 / m_nextTrajectory->cubicApprox().length()))));
+
     for (int j = 1; j < m_offset->curve()->nbPoints() - 1; ++j) {
-        Eigen::Vector2f p = m_offset->curve()->point(j);
-        m_offset->curve()->setKeyframe(Eigen::Vector2f(p.x(), curProxy.evalYFromX(p.x()) - curCurve->evalAt(p.x())), j);
+        Eigen::Vector2d p = m_offset->curve()->point(j);
+        m_offset->curve()->setKeyframe(Eigen::Vector2d(p.x(), curProxy.evalYFromX(p.x()) - curCurve->evalAt(p.x())), j);
     }
     for (int j = 1; j < m_nextTrajectory->localOffset()->curve()->nbPoints() - 1; ++j) {
-        Eigen::Vector2f p = m_nextTrajectory->localOffset()->curve()->point(j);
-        m_nextTrajectory->localOffset()->curve()->setKeyframe(Eigen::Vector2f(p.x(), nextProxy.evalYFromX(p.x()) - nextCurve->evalAt(p.x())), j);
+        Eigen::Vector2d p = m_nextTrajectory->localOffset()->curve()->point(j);
+        m_nextTrajectory->localOffset()->curve()->setKeyframe(Eigen::Vector2d(p.x(), nextProxy.evalYFromX(p.x()) - nextCurve->evalAt(p.x())), j);
     }
 }
 
 void Trajectory::resetLocalOffset() {
     for (int i = 0; i < m_offset->curve()->nbPoints(); ++i) {
-        Eigen::Vector2f p = m_offset->curve()->point(i);
-        m_offset->curve()->setKeyframe(Eigen::Vector2f(p.x(), 0.0f), i);
+        Eigen::Vector2d p = m_offset->curve()->point(i);
+        m_offset->curve()->setKeyframe(Eigen::Vector2d(p.x(), 0.0f), i);
     }
 }
 
@@ -274,21 +269,12 @@ std::shared_ptr<Trajectory> Trajectory::load(QDomElement &trajEl, VectorKeyFrame
     traj->m_hardConstraint = trajEl.attribute("hardConstraint").toInt();
     traj->m_syncNext = trajEl.attribute("syncNext").toInt();
     traj->m_syncPrev = trajEl.attribute("syncPrev").toInt();
-    if (trajEl.hasAttribute("nextTrajID")) traj->m_nextTrajectoryID = trajEl.attribute("nextTrajID").toInt();
-    else traj->m_nextTrajectoryID = -1;
-    if (trajEl.hasAttribute("prevTrajID")) traj->m_prevTrajectoryID = trajEl.attribute("prevTrajID").toInt();
-    else traj->m_prevTrajectoryID = -1;
-    if (trajEl.hasAttribute("parentId")) traj->m_parentTrajectoryId = trajEl.attribute("parentId").toInt();
-    else traj->m_parentTrajectoryId = -1;
+    traj->m_nextTrajectoryID = trajEl.attribute("nextTrajID", "-1").toInt();
+    traj->m_prevTrajectoryID = trajEl.attribute("prevTrajID", "-1").toInt();
+    traj->m_parentTrajectoryId = trajEl.attribute("parentId", "-1").toInt();
 
-    QString string = trajEl.text();
-    QTextStream stream(&string);
-    Point::Scalar p0x, p0y, p1x, p1y, p2x, p2y, p3x, p3y;
-    stream >> p0x >> p0y >> p1x >> p1y >> p2x >> p2y >> p3x >> p3y;
-    traj->m_cubicApprox.setP0(Point::VectorType(p0x, p0y));
-    traj->m_cubicApprox.setP1(Point::VectorType(p1x, p1y));
-    traj->m_cubicApprox.setP2(Point::VectorType(p2x, p2y));
-    traj->m_cubicApprox.setP3(Point::VectorType(p3x, p3y));
+    QDomElement bezierElt = trajEl.firstChildElement("bezier2D");
+    traj->m_cubicApprox.load(bezierElt);
 
     QDomElement localOffsetEl = trajEl.firstChildElement("localOffset");
     traj->m_offset->load(localOffsetEl);
@@ -329,12 +315,7 @@ void Trajectory::save(QDomDocument &doc, QDomElement &el, const VectorKeyFrame *
     trajElt.setAttribute("v", (double)m_latticeCoord.uv.y());
 
     // save cubic approx
-    stream << m_cubicApprox.getP0().x() << " " << m_cubicApprox.getP0().y() << " ";
-    stream << m_cubicApprox.getP1().x() << " " << m_cubicApprox.getP1().y() << " ";
-    stream << m_cubicApprox.getP2().x() << " " << m_cubicApprox.getP2().y() << " ";
-    stream << m_cubicApprox.getP3().x() << " " << m_cubicApprox.getP3().y() << " ";
-    QDomText txt = doc.createTextNode(string);
-    trajElt.appendChild(txt);
+    m_cubicApprox.save(doc, trajElt);
 
     // save local offset
     QDomElement offsetElt = doc.createElement("localOffset");

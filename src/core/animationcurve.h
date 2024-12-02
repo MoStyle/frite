@@ -1,11 +1,11 @@
-/*
- * SPDX-FileCopyrightText: 2013 Romain Vergne <romain.vergne@inria.fr>
- * SPDX-FileCopyrightText: 2020-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: MPL-2.0
- */
+// This file is part of Gratin, a node-based compositing software
+// for 2D and 3D animations.
+//
+// Copyright (C) 2013 Romain Vergne <romain.vergne@inria.fr>
+//
+// This Source Code Form is subject to the terms of the Mozilla
+// Public License v. 2.0. If a copy of the MPL was not distributed
+// with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #ifndef CURVE
 #define CURVE
@@ -28,12 +28,14 @@
 #include "utils/utils.h"
 #include "utils/geom.h"
 
+#define LUT_PRECISION 50
+
 class Curve;
 
 // Generic curve interpolator
 class CurveInterpolator {
    public:
-    CurveInterpolator(const Eigen::Vector2f &pt = Eigen::Vector2f(0, 0));
+    CurveInterpolator(const Eigen::Vector2d &pt = Eigen::Vector2d(0, 0));
     CurveInterpolator(CurveInterpolator *curve);
     virtual ~CurveInterpolator() {
         _points.clear();
@@ -41,22 +43,23 @@ class CurveInterpolator {
     }
 
     // evaluate
-    virtual float evalAt(float x) const = 0;
-    virtual float evalDerivativeAt(float x) const = 0;
+    virtual double evalAt(double x) const = 0;
+    virtual double evalDerivativeAt(double x) const = 0;
+    virtual double evalInverse(double y) const; // only for monotonic interpolators
 
     // keyframing
-    virtual int addKeyframe(const Eigen::Vector2f &pt);
-    virtual void setKeyframe(const Eigen::Vector2f &pt, unsigned int i = 0);
+    virtual int addKeyframe(const Eigen::Vector2d &pt);
+    virtual void setKeyframe(const Eigen::Vector2d &pt, unsigned int i = 0);
     virtual void delKeyframe(unsigned int i);
-    virtual void setTangent(const Eigen::Vector2f &pt, unsigned int i = 0, unsigned int side = 0);
-    virtual void setTangent(const Eigen::Vector4f &pt, unsigned int i = 0);
+    virtual void setTangent(const Eigen::Vector2d &pt, unsigned int i = 0, unsigned int side = 0);
+    virtual void setTangent(const Eigen::Vector4d &pt, unsigned int i = 0);
     virtual void moveKeys(int offsetFirst, int offsetLast);
     virtual void removeKeyframeBefore(int frame);
     virtual void removeKeyframeAfter(int frame);
     virtual void removeKeys();
-    virtual float normalizeX();
+    virtual double normalizeX();
     virtual void smoothTangents();
-    virtual void resample(unsigned int n) { std::cout << "not implemeted" << std::endl; }
+    virtual void resample(unsigned int n) { std::cout << "not implemented" << std::endl; }
     
     inline virtual void removeLastPoint() {
         if (!_points.empty()) {
@@ -68,21 +71,21 @@ class CurveInterpolator {
 
 
     // return points and lines that describe the curve
-    virtual const std::vector<Eigen::Vector2f> samplePoints(float x1, float x2, unsigned int nb = 100) const;
-    virtual const std::vector<Eigen::Vector2f> sampleLines(float x1, float x2, unsigned int nb = 100) const;
-    virtual void tangentAt(float t, unsigned int i);
-    virtual void scaleTangentVertical(float factor);
+    virtual const std::vector<Eigen::Vector2d> samplePoints(double x1, double x2, unsigned int nb = 100) const;
+    virtual const std::vector<Eigen::Vector2d> sampleLines(double x1, double x2, unsigned int nb = 100) const;
+    virtual void tangentAt(double t, unsigned int i);
+    virtual void scaleTangentVertical(double factor);
 
     // accessors
     inline unsigned int nbPoints() const { return _points.size(); }
     inline unsigned int nbTangents() const { return _tangents.size(); }
-    inline const std::vector<Eigen::Vector2f> &points() const { return _points; }
-    inline const std::vector<Eigen::Vector4f> &tangents() const { return _tangents; }
-    inline const Eigen::Vector2f &point(unsigned int i = 0) const {
+    inline const std::vector<Eigen::Vector2d> &points() const { return _points; }
+    inline const std::vector<Eigen::Vector4d> &tangents() const { return _tangents; }
+    inline const Eigen::Vector2d &point(unsigned int i = 0) const {
         assert(i < nbPoints());
         return _points[i];
     }
-    inline const Eigen::Vector4f &tangent(unsigned int i = 0) const {
+    inline const Eigen::Vector4d &tangent(unsigned int i = 0) const {
         assert(i < nbTangents());
         return _tangents[i];
     }
@@ -90,8 +93,8 @@ class CurveInterpolator {
     inline virtual bool useTangents() const { return false; }
 
    protected:
-    std::vector<Eigen::Vector2f> _points;
-    std::vector<Eigen::Vector4f> _tangents;
+    std::vector<Eigen::Vector2d> _points;
+    std::vector<Eigen::Vector4d> _tangents;
 
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -100,10 +103,10 @@ class CurveInterpolator {
 // Linear interpolation
 class LinearInterpolator : public CurveInterpolator {
    public:
-    LinearInterpolator(const Eigen::Vector2f &pt) : CurveInterpolator(pt) {}
+    LinearInterpolator(const Eigen::Vector2d &pt) : CurveInterpolator(pt) {}
     LinearInterpolator(CurveInterpolator *curve) : CurveInterpolator(curve) {}
 
-    inline float evalAt(float x) const {
+    inline double evalAt(double x) const {
         assert(!_points.empty());
         for (unsigned int i = 0; i < nbPoints() - 1; ++i) {
             if (_points[i + 1][0] >= x) {
@@ -113,7 +116,7 @@ class LinearInterpolator : public CurveInterpolator {
         return _points[0][1];
     }
 
-    inline float evalDerivativeAt(float x) const {
+    inline double evalDerivativeAt(double x) const {
         assert(!_points.empty());
         for (unsigned int i = 0; i < nbPoints() - 1; ++i) {
             if (_points[i + 1][0] >= x) {
@@ -130,10 +133,10 @@ class LinearInterpolator : public CurveInterpolator {
 // Step interpolation
 class StepInterpolator : public CurveInterpolator {
    public:
-    StepInterpolator(const Eigen::Vector2f &pt) : CurveInterpolator(pt) {}
+    StepInterpolator(const Eigen::Vector2d &pt) : CurveInterpolator(pt) {}
     StepInterpolator(CurveInterpolator *curve) : CurveInterpolator(curve) {}
 
-    inline float evalAt(float x) const {
+    inline double evalAt(double x) const {
         assert(!_points.empty());
         for (unsigned int i = 0; i < nbPoints() - 1; ++i) {
             if (_points[i + 1][0] >= x) {
@@ -143,7 +146,7 @@ class StepInterpolator : public CurveInterpolator {
         return _points[0][1];
     }
 
-    inline float evalDerivativeAt(float x) const {
+    inline double evalDerivativeAt(double x) const {
         assert(!_points.empty());
         return 0;
     }
@@ -155,10 +158,10 @@ class StepInterpolator : public CurveInterpolator {
 // Shepard interpolation
 class ShepardInterpolator : public CurveInterpolator {
    public:
-    ShepardInterpolator(const Eigen::Vector2f &pt) : CurveInterpolator(pt), _p(2.0), _eps(1.0e-10) {}
+    ShepardInterpolator(const Eigen::Vector2d &pt) : CurveInterpolator(pt), _p(2.0), _eps(1.0e-10) {}
     ShepardInterpolator(CurveInterpolator *curve) : CurveInterpolator(curve), _p(2.0), _eps(1.0e-10) {}
 
-    inline float evalAt(float x) const {
+    inline double evalAt(double x) const {
         assert(!_points.empty());
 
         double r = 0.0;
@@ -170,24 +173,24 @@ class ShepardInterpolator : public CurveInterpolator {
             r += (w(x, _points[i][0]) * _points[i][1]) / std::max(d, _eps);
         }
 
-        return (float)r;
+        return (double)r;
     }
 
 
-    inline float evalDerivativeAt(float x) const {
+    inline double evalDerivativeAt(double x) const {
         assert(!_points.empty());
-        float v1 = evalAt(x);
+        double v1 = evalAt(x);
         if (x == _points.back()[0]) {
-            float v2 = evalAt(x - _eps);
+            double v2 = evalAt(x - _eps);
             return (v1 - v2) / _eps;
         } else {
-            float v2 = evalAt(x + _eps);
+            double v2 = evalAt(x + _eps);
             return (v2 - v1) / _eps;
         }
     }
 
    private:
-    inline double w(float x, float xi) const { return pow(std::max((double)fabs(xi - x), _eps), -_p); }
+    inline double w(double x, double xi) const { return pow(std::max((double)fabs(xi - x), _eps), -_p); }
     const double _p;
     const double _eps;
 
@@ -198,7 +201,7 @@ class ShepardInterpolator : public CurveInterpolator {
 // Spline interpolation
 class SplineInterpolator : public CurveInterpolator {
    public:
-    SplineInterpolator(const Eigen::Vector2f &pt) : CurveInterpolator(pt) {
+    SplineInterpolator(const Eigen::Vector2d &pt) : CurveInterpolator(pt) {
         nbPointsChanged();
         computeSolution();
     }
@@ -207,12 +210,12 @@ class SplineInterpolator : public CurveInterpolator {
         computeSolution();
     }
 
-    virtual int addKeyframe(const Eigen::Vector2f &pt);
-    virtual void setKeyframe(const Eigen::Vector2f &pt, unsigned int i);
+    virtual int addKeyframe(const Eigen::Vector2d &pt);
+    virtual void setKeyframe(const Eigen::Vector2d &pt, unsigned int i);
     virtual void delKeyframe(unsigned int i);
     virtual void resample(unsigned int n);
 
-    inline float evalAt(float x) const {
+    inline double evalAt(double x) const {
         assert(!_points.empty());
 
         if (nbPoints() == 1) {
@@ -229,8 +232,8 @@ class SplineInterpolator : public CurveInterpolator {
         for (unsigned int i = 0; i < nbPoints() - 1; ++i) {
             if (_points[i + 1][0] >= x) {
                 const unsigned int index = i * 4;
-                const float x2 = x * x;
-                const float x3 = x2 * x;
+                const double x2 = x * x;
+                const double x3 = x2 * x;
                 return _x[index] + _x[index + 1] * x + _x[index + 2] * x2 + _x[index + 3] * x3;
             }
         }
@@ -239,7 +242,7 @@ class SplineInterpolator : public CurveInterpolator {
         return _points[0][1];
     }
 
-    inline float evalDerivativeAt(float x) const {
+    inline double evalDerivativeAt(double x) const {
         assert(!_points.empty());
 
         if (nbPoints() == 1) {
@@ -253,7 +256,7 @@ class SplineInterpolator : public CurveInterpolator {
         for (unsigned int i = 0; i < nbPoints() - 1; ++i) {
             if (_points[i + 1][0] >= x) {
                 const unsigned int index = i * 4;
-                const float x2 = x * x;
+                const double x2 = x * x;
                 return _x[index + 1] + 2 * _x[index + 2] * x + 3 * _x[index + 3] * x2;
             }
         }
@@ -295,24 +298,24 @@ class SplineInterpolator : public CurveInterpolator {
  */
 class CubicPolynomialInterpolator : public CurveInterpolator {
    public:
-    CubicPolynomialInterpolator(const Eigen::Vector2f &pt);
+    CubicPolynomialInterpolator(const Eigen::Vector2d &pt);
 
     CubicPolynomialInterpolator(CurveInterpolator *curve);
 
-    virtual int addKeyframe(const Eigen::Vector2f &pt);
-    virtual void setKeyframe(const Eigen::Vector2f &pt, unsigned int i);
+    virtual int addKeyframe(const Eigen::Vector2d &pt);
+    virtual void setKeyframe(const Eigen::Vector2d &pt, unsigned int i);
     virtual void delKeyframe(unsigned int i);
 
-    inline float evalAt(float x) const {
+    inline double evalAt(double x) const {
         assert(_points.size() == 5);
-        const float x2 = x * x;
-        const float x3 = x2 * x;
+        const double x2 = x * x;
+        const double x3 = x2 * x;
         return _x[0] * x + _x[1] * x2 + _x[2] * x3;
     }
 
-    inline float evalDerivativeAt(float x) const {
+    inline double evalDerivativeAt(double x) const {
         assert(_points.size() == 5);
-        const float x2 = x * x;
+        const double x2 = x * x;
         return _x[0] + 2 * _x[1] * x + 3 * _x[2] * x2;
     }
 
@@ -322,7 +325,7 @@ class CubicPolynomialInterpolator : public CurveInterpolator {
      * the new polynomial is approximated and the control points 
      * are reprojected onto the new curve 
      */
-    void setControlPoints(float p1, float p2, float p3, int fixedPointIdx);
+    void setControlPoints(double p1, double p2, double p3, int fixedPointIdx);
 
     /**
      * Splits the current cubic polynomial in two at x
@@ -331,13 +334,13 @@ class CubicPolynomialInterpolator : public CurveInterpolator {
      * The second half (right) is returned by the function
      * The first half (left) is the current instance
      */
-    CubicPolynomialInterpolator *splitAt(float x);
+    CubicPolynomialInterpolator *splitAt(double x);
 
    private:
     void computeSolution();
-    void computeSolutionAux(float x1, float x2, float x3);
+    void computeSolutionAux(double x1, double x2, double x3);
     void resampleControlPoints();
-    void setCoeffs(float a, float b, float c);
+    void setCoeffs(double a, double b, double c);
 
     int _constraintIdx;
 
@@ -345,7 +348,7 @@ class CubicPolynomialInterpolator : public CurveInterpolator {
     Eigen::VectorXf _b;
     Eigen::VectorXf _x;
 
-    std::vector<float> _prevControlPointsY;
+    std::vector<double> _prevControlPointsY;
 
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -356,47 +359,49 @@ class CubicPolynomialInterpolator : public CurveInterpolator {
 */
 class CubicMonotonicInterpolator : public CurveInterpolator {
    public:
-    CubicMonotonicInterpolator(const Eigen::Vector2f &pt);
+    CubicMonotonicInterpolator(const Eigen::Vector2d &pt);
     CubicMonotonicInterpolator(CurveInterpolator *curve);
 
-    virtual int addKeyframe(const Eigen::Vector2f &pt) override;
-    virtual void setKeyframe(const Eigen::Vector2f &pt, unsigned int i) override;
+    virtual int addKeyframe(const Eigen::Vector2d &pt) override;
+    virtual void setKeyframe(const Eigen::Vector2d &pt, unsigned int i) override;
     virtual void delKeyframe(unsigned int i) override;
     virtual void removeLastPoint() override;
-    virtual float normalizeX() override;
+    virtual double normalizeX() override;
 
-    inline float evalAt(float x) const override{
+    inline double evalAt(double x) const override{
         assert(_points.size() >= 2);
         for (unsigned int i = 0; i < nbPoints()- 1; ++i) {
             if (_points[i + 1].x() >= x) {
-                float dx = _points[i + 1].x() -_points[i].x();
-                float t = (x - _points[i].x()) / dx;
-                float tt = t*t;
-                float ttt = t*tt;
-                return (2.0f * ttt - 3.0f * tt + 1) * _points[i].y() + 
-                       (ttt - 2.0f * tt + t) * dx * _slopes[i] +
-                       (-2.0f * ttt + 3.0f * tt) * _points[i + 1].y() +
+                double dx = _points[i + 1].x() -_points[i].x();
+                double t = (x - _points[i].x()) / dx;
+                double tt = t*t;
+                double ttt = t*tt;
+                return (2.0 * ttt - 3.0 * tt + 1) * _points[i].y() + 
+                       (ttt - 2.0 * tt + t) * dx * _slopes[i] +
+                       (-2.0 * ttt + 3.0 * tt) * _points[i + 1].y() +
                        (ttt - tt) * dx * _slopes[i + 1];
             }
         }
         return _points[0].y();
     }
 
-    inline float evalDerivativeAt(float x) const override {
+    inline double evalDerivativeAt(double x) const override {
         for (unsigned int i = 0; i < nbPoints()- 1; ++i) {
             if (_points[i + 1].x() >= x) {
-                float dx = _points[i + 1].x() -_points[i].x();
-                float t = (x - _points[i].x()) / dx;
-                float tt = t*t;
-                return ((6.0f * tt - 6.0f * t) * _points[i].y() + 
-                       (3.0f * tt - 4.0f * t + 1) * dx * _slopes[i] +
-                       (-6.0f * tt + 6.0f * t) * _points[i + 1].y() +
-                       (3.0f * tt - 2.0f * t) * dx * _slopes[i + 1]) /
+                double dx = _points[i + 1].x() -_points[i].x();
+                double t = (x - _points[i].x()) / dx;
+                double tt = t*t;
+                return ((6.0 * tt - 6.0 * t) * _points[i].y() + 
+                       (3.0 * tt - 4.0 * t + 1) * dx * _slopes[i] +
+                       (-6.0 * tt + 6.0 * t) * _points[i + 1].y() +
+                       (3.0 * tt - 2.0 * t) * dx * _slopes[i + 1]) /
                        dx;
             }
         }
         return _slopes.back();
     }
+
+    double evalInverse(double y) const override;
 
     /**
      * resample the current curve with n regularly spaced control points (not taking into account the first and last control points)
@@ -410,12 +415,12 @@ class CubicMonotonicInterpolator : public CurveInterpolator {
      */
     void resampleDichotomic(unsigned int maxControlPoints, unsigned int nbFrames);
 
-    float slopeAt(unsigned int i) const { return _slopes[i]; }
-    void setSlope(unsigned int i, float slope) { _slopes[i] = slope; }
+    double slopeAt(unsigned int i) const { return _slopes[i]; }
+    void setSlope(unsigned int i, double slope) { _slopes[i] = slope; }
     unsigned int nbSlopes() const { return _slopes.size(); }
     void debugSlopes();
 
-    float smallestXInterval() const;
+    double smallestXInterval() const;
 
     void smoothTangents() override;
     
@@ -423,62 +428,63 @@ class CubicMonotonicInterpolator : public CurveInterpolator {
     void makeSlopes();
     void makeNaturalC2();
     void updateSlope(unsigned int i, bool updateNeighbors=true);
-    void checkSlopeMonotonicity(unsigned int i, float slope, float leftSecantSlope, float rightSecantSlope);
-    void resampleDichotomicAddControlPoint(CubicMonotonicInterpolator *newCurve, float xa, float xb, unsigned int level, unsigned int maxLevel, float threshold);
-    float meanSqErrorOnSegment(CubicMonotonicInterpolator *newCurve, float xa, float xb, unsigned int samples=10);
-    float sdOnSegment(CubicMonotonicInterpolator *newCurve, float xa, float xb, unsigned int samples=10);
+    void checkSlopeMonotonicity(unsigned int i, double slope, double leftSecantSlope, double rightSecantSlope);
+    void resampleDichotomicAddControlPoint(CubicMonotonicInterpolator *newCurve, double xa, double xb, unsigned int level, unsigned int maxLevel, double threshold);
+    double meanSqErrorOnSegment(CubicMonotonicInterpolator *newCurve, double xa, double xb, unsigned int samples=10);
+    double sdOnSegment(CubicMonotonicInterpolator *newCurve, double xa, double xb, unsigned int samples=10);
 
-    std::vector<float> _slopes;
+    std::vector<double> _slopes;
     
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
+
 // Hermite interpolation
 class HermiteInterpolator : public CurveInterpolator {
    public:
-    HermiteInterpolator(const Eigen::Vector2f &pt) : CurveInterpolator(pt) { initTangents(); }
+    HermiteInterpolator(const Eigen::Vector2d &pt) : CurveInterpolator(pt) { initTangents(); }
     HermiteInterpolator(CurveInterpolator *curve) : CurveInterpolator(curve) { initTangents(); }
-    virtual int addKeyframe(const Eigen::Vector2f &pt);
+    virtual int addKeyframe(const Eigen::Vector2d &pt);
     virtual void delKeyframe(unsigned int i);
-    virtual void setTangent(const Eigen::Vector2f &pt, unsigned int i = 0, unsigned int side = 0);
+    virtual void setTangent(const Eigen::Vector2d &pt, unsigned int i = 0, unsigned int side = 0);
     inline virtual bool useTangents() const { return true; }
-    virtual void tangentAt(float t, unsigned int i);
-    virtual void tangentAt(float , Eigen::Vector2f &t1, Eigen::Vector2f &t2, Eigen::Vector2f &t3, Eigen::Vector2f &t4);
+    virtual void tangentAt(double t, unsigned int i);
+    virtual void tangentAt(double , Eigen::Vector2d &t1, Eigen::Vector2d &t2, Eigen::Vector2d &t3, Eigen::Vector2d &t4);
 
-    inline float evalAt(float x) const {
+    inline double evalAt(double x) const {
         unsigned int i = 0;
-        float t = findParam(x, i);
-        if (x == 1.0f) t = 1.0f;  // FIXME: error with at least 3 controls points, findParam(1.0) returns -1.0! alsso findParam(0.0) returns -1.0 too! 
-        t = std::min(std::max(t, 0.0f), 1.0f);
+        double t = findParam(x, i);
+        if (x == 1.0) t = 1.0;  // FIXME: error with at least 3 controls points, findParam(1.0) returns -1.0! alsso findParam(0.0) returns -1.0 too! 
+        t = std::min(std::max(t, 0.0), 1.0);
 
-        const Eigen::Vector2f left = _tangents[i].head<2>();
-        const Eigen::Vector2f right = _tangents[i + 1].tail<2>();
+        const Eigen::Vector2d left = _tangents[i].head<2>();
+        const Eigen::Vector2d right = _tangents[i + 1].tail<2>();
 
-        const Eigen::Vector4f by = Geom::bezierCoeffs(_points[i][1], _points[i][1] + (left[1] /* / 3.0f */), _points[i + 1][1] + (right[1] /* / 3.0f */), _points[i + 1][1]);
+        const Eigen::Vector4d by = Geom::bezierCoeffs(_points[i][1], _points[i][1] + (left[1] /* / 3.0 */), _points[i + 1][1] + (right[1] /* / 3.0 */), _points[i + 1][1]);
         return by[0] * t * t * t + by[1] * t * t + by[2] * t + by[3];
     }
 
-    inline float evalDerivativeAt(float x) const {
+    inline double evalDerivativeAt(double x) const {
         unsigned int i = 0;
-        float t = findParam(x, i);
-        if (x == 1.0f) t = 1.0f;  // FIXME: error with at least 3 controls points, findParam(1.0) returns -1.0! also findParam(0.0) returns -1.0 too! 
-        t = std::min(std::max(t, 0.0f), 1.0f);
+        double t = findParam(x, i);
+        if (x == 1.0) t = 1.0;  // FIXME: error with at least 3 controls points, findParam(1.0) returns -1.0! also findParam(0.0) returns -1.0 too! 
+        t = std::min(std::max(t, 0.0), 1.0);
 
-        const Eigen::Vector2f left = _tangents[i].head<2>();
-        const Eigen::Vector2f right = _tangents[i + 1].tail<2>();
-        const Eigen::Vector4f by = Geom::bezierCoeffs(_points[i][1], _points[i][1] + (left[1] /* / 3.0f */), _points[i + 1][1] + (right[1]  /* / 3.0f */), _points[i + 1][1]);
+        const Eigen::Vector2d left = _tangents[i].head<2>();
+        const Eigen::Vector2d right = _tangents[i + 1].tail<2>();
+        const Eigen::Vector4d by = Geom::bezierCoeffs(_points[i][1], _points[i][1] + (left[1] /* / 3.0 */), _points[i + 1][1] + (right[1]  /* / 3.0 */), _points[i + 1][1]);
         return 3 * by[0] * t * t + 2 * by[1] * t + by[2];
     }
 
     // find t given x
-    inline float findParam(float x, unsigned int &i) const {
+    inline double findParam(double x, unsigned int &i) const {
         // assert(!_points.empty());
         for (i = 0; i < nbPoints() - 1; ++i) {
             if (_points[i + 1][0] >= x) {
-                const Eigen::Vector2f left = _tangents[i].head<2>();
-                const Eigen::Vector2f right = _tangents[i + 1].tail<2>();
-                const Eigen::Vector4f bx = Geom::bezierCoeffs(_points[i][0], _points[i][0] + (left[0] /* / 3.0f */) + 1e-8, _points[i + 1][0] + (right[0] /* / 3.0f */) - 1e-8, _points[i + 1][0]); // FIXME: try to remove/balance the epsilon
+                const Eigen::Vector2d left = _tangents[i].head<2>();
+                const Eigen::Vector2d right = _tangents[i + 1].tail<2>();
+                const Eigen::Vector4d bx = Geom::bezierCoeffs(_points[i][0], _points[i][0] + (left[0] /* / 3.0 */) + 1e-8, _points[i + 1][0] + (right[0] /* / 3.0 */) - 1e-8, _points[i + 1][0]); // FIXME: try to remove/balance the epsilon
                 if (fabs(bx[0]) < 1e-8) return Utils::quadraticRoot(bx[1], bx[2], (bx[3] - x));
                 return Utils::cubicRoot(bx[1] / bx[0], bx[2] / bx[0], (bx[3] - x) / bx[0]);
             }
@@ -493,34 +499,63 @@ class HermiteInterpolator : public CurveInterpolator {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
+class HermiteInterpolatorArcLength : public HermiteInterpolator {
+    public:
+        HermiteInterpolatorArcLength(const Eigen::Vector2d &pt) : HermiteInterpolator(pt) { updateArclengthLUT(); }
+        HermiteInterpolatorArcLength(CurveInterpolator *curve) : HermiteInterpolator(curve) { updateArclengthLUT(); }
+
+        inline int addKeyframe(const Eigen::Vector2d &pt){ 
+            int ret = HermiteInterpolator::addKeyframe(pt); 
+            updateArclengthLUT();
+            return ret;
+        }
+        void updateArclengthLUT();
+        virtual double evalFromTandI(double t, unsigned int i);
+        virtual double findParamArcLength(double x, unsigned int &i);
+        inline double evalArcLengthAt(double x){
+            unsigned int i = 0;
+            double t = findParamArcLength(x, i);
+            return evalFromTandI(t, i);
+        }
+        inline double evalAt(double x){ return evalArcLengthAt(x); }
+
+    private:
+        std::vector<std::array<std::array<double, LUT_PRECISION>, 2>> alengthLUT; // 0:s  1:t
+};
+
 // Curve...
 class Curve {
    public:
-    enum { LINEAR_INTERP = 0, STEP_INTERP = 1, SHEPARD_INTERP = 2, SPLINE_INTERP = 3, HERMITE_INTERP = 4, CUBIC_INTERP = 5, MONOTONIC_CUBIC_INTERP = 6 };
+    enum { LINEAR_INTERP = 0, STEP_INTERP = 1, SHEPARD_INTERP = 2, SPLINE_INTERP = 3, HERMITE_INTERP = 4,
+            CUBIC_INTERP = 5, MONOTONIC_CUBIC_INTERP = 6,  HERMITE_ARC_LENGTH_INTERP = 7 };
 
-    Curve(const Eigen::Vector2f &pt, int interpolation = 0);
+    Curve(const Eigen::Vector2d &pt, int interpolation = 0);
     Curve(const Curve &other);
     virtual ~Curve();
 
     CurveInterpolator *interpolator() const { return _interpolator; }
 
     // evaluation
-    inline float evalAt(float x) const {
+    inline double evalAt(double x) const {
         if (x < point(0)[0]) return point(0)[1];
         if (x > point(nbPoints() - 1)[0]) return point(nbPoints() - 1)[1];
         return _interpolator->evalAt(x);
     }
 
-    inline float evalDerivativeAt(float x) const {
-        if (x < point(0)[0] || x > point(nbPoints() - 1)[0]) return 0.0f; // or evalDerivativeAt extremity?
+    inline double evalDerivativeAt(double x) const {
+        if (x < point(0)[0] || x > point(nbPoints() - 1)[0]) return 0.0; // or evalDerivativeAt extremity?
         return _interpolator->evalDerivativeAt(x);
     }
 
+    inline double evalInverse(double y) const {
+        return _interpolator->evalInverse(y);
+    }
+
     // keyframing
-    inline int addKeyframe(const Eigen::Vector2f &pt) { return _interpolator->addKeyframe(pt); }
-    inline void setKeyframe(const Eigen::Vector2f &pt, unsigned int i = 0) { _interpolator->setKeyframe(pt, i); }
-    inline void setTangent(const Eigen::Vector2f &pt, unsigned int i = 0, unsigned int side = 0) { _interpolator->setTangent(pt, i, side); }
-    inline void setTangent(const Eigen::Vector4f &pt, unsigned int i = 0) { _interpolator->setTangent(pt, i); }
+    inline int addKeyframe(const Eigen::Vector2d &pt) { return _interpolator->addKeyframe(pt); }
+    inline void setKeyframe(const Eigen::Vector2d &pt, unsigned int i = 0) { _interpolator->setKeyframe(pt, i); }
+    inline void setTangent(const Eigen::Vector2d &pt, unsigned int i = 0, unsigned int side = 0) { _interpolator->setTangent(pt, i, side); }
+    inline void setTangent(const Eigen::Vector4d &pt, unsigned int i = 0) { _interpolator->setTangent(pt, i); }
     inline void delKeyframe(unsigned int i) { _interpolator->delKeyframe(i); }
     inline void moveKeys(int offsetFirst, int offsetLast) { _interpolator->moveKeys(offsetFirst, offsetLast); }
     inline void removeKeyframeBefore(int frame) { _interpolator->removeKeyframeBefore(frame); }
@@ -528,15 +563,14 @@ class Curve {
     inline void removeKeys() { _interpolator->removeKeys(); }
     inline void removeLastPoint() { _interpolator->removeLastPoint(); }
 
-
     // specify the interpolation mode (see enum above)
     void setInterpolation(int interpolation);
     void setInterpolator(CurveInterpolator *interpolator) { _interpolator = interpolator; }
 
     // curve samples
     void resample(unsigned int n) { _interpolator->resample(n); }
-    const std::vector<Eigen::Vector2f> samplePoints(float x1, float x2, unsigned int nb = 100) const;
-    const std::vector<Eigen::Vector2f> sampleLines(float x1, float x2, unsigned int nb = 100) const;
+    const std::vector<Eigen::Vector2d> samplePoints(double x1, double x2, unsigned int nb = 100) const;
+    const std::vector<Eigen::Vector2d> sampleLines(double x1, double x2, unsigned int nb = 100) const;
 
     // extract a "sub-curve" from the points i to j (inclusive) of this curve
     // optionally remaps the x-axis boundaries of the curve to be [0,1] (and y-axis if the curve is monotonic piecewise cubic)
@@ -548,12 +582,12 @@ class Curve {
     inline void normalize() { }
 
     // computes the tangents of the curve at the give point
-    inline void tangentAt(float t, unsigned int i) {
+    inline void tangentAt(double t, unsigned int i) {
         return _interpolator->tangentAt(t, i);
     }
 
     // scale vertical component of tangents
-    void scaleTangentVertical(float factor = 1.0f) { _interpolator->scaleTangentVertical(factor); }
+    void scaleTangentVertical(double factor = 1.0) { _interpolator->scaleTangentVertical(factor); }
 
     // set the curve to be piecewise linear
     void setPiecewiseLinear();
@@ -566,10 +600,10 @@ class Curve {
     inline const QString &interpName() const { return _interpNames[_interpType]; }
     inline unsigned int nbPoints() const { return _interpolator->nbPoints(); }
     inline unsigned int nbTangents() const { return _interpolator->nbTangents(); }
-    inline const std::vector<Eigen::Vector2f> &points() const { return _interpolator->points(); }
-    inline const std::vector<Eigen::Vector4f> &tangents() const { return _interpolator->tangents(); }
-    inline const Eigen::Vector2f &point(unsigned int i = 0) const { return _interpolator->point(i); }
-    inline const Eigen::Vector4f &tangent(unsigned int i = 0) const { return _interpolator->tangent(i); }
+    inline const std::vector<Eigen::Vector2d> &points() const { return _interpolator->points(); }
+    inline const std::vector<Eigen::Vector4d> &tangents() const { return _interpolator->tangents(); }
+    inline const Eigen::Vector2d &point(unsigned int i = 0) const { return _interpolator->point(i); }
+    inline const Eigen::Vector4d &tangent(unsigned int i = 0) const { return _interpolator->tangent(i); }
     inline bool useTangents() const { return _interpolator->useTangents(); }
     static const QStringList &interpNames() { return _interpNames; }
     QRectF getBoundingBox();
@@ -577,7 +611,7 @@ class Curve {
     void print(std::ostream &os) const;
 
    private:
-    CurveInterpolator *createInterpolator(int interpolation, const Eigen::Vector2f &pt);
+    CurveInterpolator *createInterpolator(int interpolation, const Eigen::Vector2d &pt);
     CurveInterpolator *createInterpolator(int interpolation, CurveInterpolator *curve);
     int _interpType;
 

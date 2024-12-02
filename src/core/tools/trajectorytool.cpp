@@ -1,30 +1,29 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "trajectorytool.h"
 #include "group.h"
 #include "editor.h"
 #include "layermanager.h"
 #include "playbackmanager.h"
 #include "gridmanager.h"
-#include "canvasscenemanager.h"
+
 #include "tabletcanvas.h"
 #include "dialsandknobs.h"
 #include "selectionmanager.h"
 #include "canvascommands.h"
 #include "viewmanager.h"
-#include "cubic.h"
+#include "bezier2D.h"
 #include "qteigen.h"
 #include "utils/geom.h"
+
+typedef std::chrono::milliseconds ms;
+typedef std::chrono::duration<double> dsec;
+typedef std::chrono::system_clock _clock;
 
 static dkBool k_showOriginalTraj("Options->Trajectory->Show original piecewise trajectory", false);
 dkBool k_drawChain("Options->Trajectory->Draw full chain", true);
 
 TrajectoryTool::TrajectoryTool(QObject *parent, Editor *editor) : Tool(parent, editor) {
     m_toolTips = QString("Left-click: visualize trajectory | Ctrl+Left-click: add/remove trajectory constraint");
+    m_lastMoveTick = _clock::now();
 }
 
 TrajectoryTool::~TrajectoryTool() {
@@ -33,10 +32,6 @@ TrajectoryTool::~TrajectoryTool() {
 
 Tool::ToolType TrajectoryTool::toolType() const {
     return Tool::Traj;
-}
-
-QGraphicsItem *TrajectoryTool::graphicsItem() {
-    return nullptr;
 }
 
 QCursor TrajectoryTool::makeCursor(float scaling) const {
@@ -50,45 +45,58 @@ void TrajectoryTool::toggled(bool on) {
     VectorKeyFrame *keyframe = layer->getLastVectorKeyFrameAtFrame(currentFrame, 0);
     if (keyframe->selectedGroup() != nullptr) {
         for (Group *group : keyframe->selection().selectedPostGroups()) group->setShowGrid(on);
-        m_editor->scene()->selectedGroupChanged(on ? QHash<int, Group *>() : keyframe->selection().selectedPostGroups());
-        m_editor->tabletCanvas()->updateCurrentFrame();
     }
-    // curve editor
-    // if (on && m_currentTrajectory != nullptr) {
-    //     int currentFrame = m_editor->playback()->currentFrame();
-    //     emit showKeyframedVectorCurves(m_currentTrajectory->curve());
-    // } else {
-    //     emit showKeyframedVectorCurves(nullptr);
-    // }
 }
 
 void TrajectoryTool::pressed(const EventInfo& info) {
-    if (info.key->selectedGroup() == nullptr || info.key->selectedGroup()->lattice() == nullptr)
+    if (info.key->selectedGroup() == nullptr || info.key->selectedGroup()->lattice() == nullptr) {
         return;
+    }
 
     int layerIdx = m_editor->layers()->currentLayerIndex();
     int currentFrame = m_editor->playback()->currentFrame();
     Layer *layer = info.key->parentLayer();
+    Group *selectedGroup = info.key->selectedGroup();
+    Trajectory *traj = info.key->selection().selectedTrajectoryPtr();
     bool leftButtonPressed = info.mouseButton & Qt::LeftButton;
     bool controlPressed = info.modifiers & Qt::ControlModifier;
+    bool trajectorySelected = traj != nullptr;
+    m_tickPressed = false;
+    m_tangentControlPressed = false;
 
     if (leftButtonPressed && !controlPressed) {
-        Group *selectedGroup = info.key->selectedGroup();
         Point::VectorType pos = QE_POINT(info.pos);
-        m_tickPressed = false;
+        pos = selectedGroup->globalRigidTransform(info.alpha).inverse() * pos;
+
+        if (trajectorySelected) {
+            Point::VectorType p1 = traj->cubicApprox().getP1();
+            Point::VectorType p2 = traj->cubicApprox().getP2();
+            if ((pos - p1).norm() < 4.0) {
+                m_tangentControlPressed = true;
+                m_tangentControlPressedIdx = 0;
+                return;
+            }
+            if ((pos - p2).norm() < 4.0) {
+                m_tangentControlPressed = true;
+                m_tangentControlPressedIdx = 1;
+                return;
+            }
+        }
 
         int selectedTrajectoryId = m_editor->selection()->selectTrajectoryConstraint(info.key, info.pos, true);
-        if (selectedTrajectoryId >= 0) {
-            bool pickedAlreadySelected = info.key->selection().selectedTrajectoryPtr() != nullptr && selectedTrajectoryId == info.key->selection().selectedTrajectory()->constraintID();
+        // Clicked on a trajectory
+        if (selectedTrajectoryId >= 0) { 
+            bool pickedAlreadySelected = trajectorySelected && selectedTrajectoryId == traj->constraintID();
             const std::shared_ptr<Trajectory> &selectedTrajectory = info.key->trajectoryConstraint(selectedTrajectoryId);
             m_editor->undoStack()->push(new SetSelectedTrajectoryCommand(m_editor, layerIdx, currentFrame, selectedTrajectory, true));
 
-            // Check if a tick was clicked
+            // Check if a tangent control was clicked 
             if (pickedAlreadySelected) {
+                // Check if a tick was clicked
                 int stride = layer->stride(layer->getVectorKeyFramePosition(info.key));
                 for (int i = 1; i < stride; ++i) {
-                    float alphaLinear = (float)i/(float)stride;
-                    float alpha = info.key->selectedGroup()->spacingAlpha(alphaLinear);
+                    qreal alphaLinear = (float)i/(float)stride;
+                    qreal alpha = info.key->selectedGroup()->spacingAlpha(alphaLinear);
                     selectedTrajectory->localOffset()->frameChanged(alphaLinear);
                     Point::VectorType p = selectedTrajectory->eval(alpha + selectedTrajectory->localOffset()->get());
                     if ((pos - p).norm() <= 2.0) {
@@ -99,6 +107,7 @@ void TrajectoryTool::pressed(const EventInfo& info) {
                 }
 
                 // Propagate the trajectory forward if the endpoint is clicked
+                float r = (m_tickPressedIdx == 0 || m_tickPressedIdx == stride) ? 4.0 : 2.0;
                 if (!m_tickPressed && (pos - selectedTrajectory->cubicApprox().getP3()).norm() < 2.0) {
                     propagateTrajectoryForward(layer, info.key, layerIdx, currentFrame, selectedTrajectory->cubicApprox().getP3());
                 }
@@ -107,7 +116,11 @@ void TrajectoryTool::pressed(const EventInfo& info) {
             // Pick a point a lattice (or multiple) and visualize its trajectory
             pickInGrids(info.key, info.alpha, info.inbetween, layerIdx, currentFrame, pos);
         }
-    } else if (leftButtonPressed && controlPressed && info.key->selection().selectedTrajectoryPtr() && !info.key->selection().selectedTrajectoryPtr()->hardConstraint()) {
+        return;
+    } 
+    
+    // Add hard constraint
+    if (leftButtonPressed && controlPressed && trajectorySelected && !traj->hardConstraint()) {
         if (!m_trajectories.empty()) {
             for (const std::shared_ptr<Trajectory> &traj : m_trajectories) {
                 m_editor->undoStack()->push(new AddTrajectoryConstraintCommand(m_editor, layerIdx, currentFrame, traj));
@@ -117,35 +130,63 @@ void TrajectoryTool::pressed(const EventInfo& info) {
             m_editor->undoStack()->push(new AddTrajectoryConstraintCommand(m_editor, layerIdx, currentFrame, info.key->selection().selectedTrajectory()));
         }
         m_trajectories.clear();
-    } else if (leftButtonPressed && controlPressed && info.key->selection().selectedTrajectoryPtr()) {
+        return;
+    }
+    
+    // Remove hard constraint (Ctrl+Left click)
+    if (leftButtonPressed && controlPressed && trajectorySelected) {
         // TODO: cleanup
         // Reset local offset
         int stride = layer->stride(layer->getVectorKeyFramePosition(info.key));
-        Trajectory *traj = info.key->selection().selectedTrajectoryPtr();
         for (int i = 1; i < stride; ++i) {
-            float alphaLinear = (float)i/(float)stride;
-            float alpha = info.key->selectedGroup()->spacingAlpha(alphaLinear);
+            qreal alphaLinear = (qreal)i/(qreal)stride;
+            qreal alpha = info.key->selectedGroup()->spacingAlpha(alphaLinear);
             traj->localOffset()->frameChanged(alphaLinear);
             Point::VectorType p = traj->eval(alpha + info.key->selection().selectedTrajectory()->localOffset()->get());
             if ((Point::VectorType(info.pos.x(), info.pos.y()) - p).norm() <= 2.0) {
                 for (int j = 0; j < traj->localOffset()->curve()->nbPoints(); ++j) {
-                    Eigen::Vector2f p = traj->localOffset()->curve()->point(j);
-                    traj->localOffset()->curve()->setKeyframe(Eigen::Vector2f(p.x(), 0.0f), j);
+                    Eigen::Vector2d p = traj->localOffset()->curve()->point(j);
+                    traj->localOffset()->curve()->setKeyframe(Eigen::Vector2d(p.x(), 0.0f), j);
                 }
                 info.key->makeInbetweensDirty();
                 return;
             }
         }
         m_editor->undoStack()->push(new RemoveTrajectoryConstraintCommand(m_editor, layerIdx, currentFrame, info.key->selection().selectedTrajectory()));
+        return;
     }
 }
 
 void TrajectoryTool::moved(const EventInfo& info) {
-    if (info.key->selectedGroup() == nullptr || info.key->selectedGroup()->lattice() == nullptr)
+    if (info.key->selectedGroup() == nullptr || info.key->selectedGroup()->lattice() == nullptr || dsec(_clock::now() - m_lastMoveTick).count() * 1000 < 8)
         return;
 
+    Trajectory *traj = info.key->selection().selectedTrajectoryPtr();
+    Point::VectorType pos(info.pos.x(), info.pos.y());
+
+    if (m_tangentControlPressed) {
+        if (m_tangentControlPressedIdx == 0) {
+            traj->setP1(pos);
+            // sync with prev tangent if it is connected
+            if (traj->prevTrajectory() && traj->syncPrev()) {
+                Point::VectorType t = traj->cubicApprox().getP1() - traj->cubicApprox().getP0(); 
+                traj->prevTrajectory()->setP2(traj->prevTrajectory()->cubicApprox().getP3() - t);
+                traj->prevTrajectory()->keyframe()->makeInbetweensDirty();
+            }
+        } else if (m_tangentControlPressedIdx == 1) {
+            traj->setP2(pos);
+            // sync with next tangent if it is connected
+            if (traj->nextTrajectory() && traj->syncNext()) {
+                Point::VectorType t = traj->cubicApprox().getP2() - traj->cubicApprox().getP3(); 
+                traj->nextTrajectory()->setP1(traj->nextTrajectory()->cubicApprox().getP0() - t);
+                traj->nextTrajectory()->keyframe()->makeInbetweensDirty();
+            }            
+        }
+        info.key->makeInbetweensDirty();
+        return;
+    }
+
     if (m_tickPressed) {
-        Trajectory *traj = info.key->selection().selectedTrajectoryPtr();
         Layer *layer = m_editor->layers()->currentLayer();
         int stride = layer->stride(layer->getVectorKeyFramePosition(info.key));
         QVector2D disp(info.pos - info.lastPos);
@@ -153,31 +194,40 @@ void TrajectoryTool::moved(const EventInfo& info) {
         float delta = disp.length();
         float len = traj->approxPathItem().length();
         float ds = delta / len;
-        float alphaLinear = (float)m_tickPressedIdx / (float)stride;
+        qreal alphaLinear = (float)m_tickPressedIdx / (float)stride;
 
         traj->localOffset()->frameChanged(alphaLinear);
         Point::VectorType t = traj->cubicApprox().evalDer(traj->group()->spacingAlpha(alphaLinear) + traj->localOffset()->get());
         float sgn = dispE.dot(t) > 0.0 ? 1.0 : -1.0;
 
         // TODO: cleanup
-        Eigen::Vector2f p = traj->localOffset()->curve()->point(m_tickPressedIdx);
-        Eigen::Vector2f prevOffset = traj->localOffset()->curve()->point(m_tickPressedIdx-1);
-        Eigen::Vector2f nextOffset = traj->localOffset()->curve()->point(m_tickPressedIdx+1);
-        Eigen::Vector2f pPrevSpacing = traj->group()->spacing()->curve()->point(m_tickPressedIdx-1);
-        Eigen::Vector2f pSpacing = traj->group()->spacing()->curve()->point(m_tickPressedIdx);
-        Eigen::Vector2f pNextSpacing = traj->group()->spacing()->curve()->point(m_tickPressedIdx+1);
+        Eigen::Vector2d p = traj->localOffset()->curve()->point(m_tickPressedIdx);
+        Eigen::Vector2d prevOffset = traj->localOffset()->curve()->point(m_tickPressedIdx-1);
+        Eigen::Vector2d nextOffset = traj->localOffset()->curve()->point(m_tickPressedIdx+1);
+        Eigen::Vector2d pPrevSpacing = traj->group()->spacing()->curve()->point(m_tickPressedIdx-1);
+        Eigen::Vector2d pSpacing = traj->group()->spacing()->curve()->point(m_tickPressedIdx);
+        Eigen::Vector2d pNextSpacing = traj->group()->spacing()->curve()->point(m_tickPressedIdx+1);
         if (pSpacing.y() + p.y() + ds * sgn <= pPrevSpacing.y() + prevOffset.y() + 1e-5 || pSpacing.y() + p.y() + ds * sgn >= pNextSpacing.y() + nextOffset.y() - 1e-5) return;
-        info.key->selection().selectedTrajectory()->localOffset()->curve()->setKeyframe(Eigen::Vector2f(p.x(), p.y() += ds * sgn), m_tickPressedIdx);
+        info.key->selection().selectedTrajectory()->localOffset()->curve()->setKeyframe(Eigen::Vector2d(p.x(), p.y() += ds * sgn), m_tickPressedIdx);
         info.key->selection().selectedTrajectory()->localOffset()->frameChanged(1.0);
         info.key->makeInbetweensDirty();
         return;
     }
+
+    if (!m_tickPressed && (info.key->selection().selectedTrajectoryPtr() == nullptr || !info.key->selection().selectedTrajectory()->hardConstraint())) {
+        int layerIdx = m_editor->layers()->currentLayerIndex();
+        int currentFrame = m_editor->playback()->currentFrame();
+        pickInGrids(info.key, info.alpha, info.inbetween, layerIdx, currentFrame, QE_POINT(info.pos));
+    }
+
+    m_lastMoveTick = _clock::now();
 }
 
 void TrajectoryTool::released(const EventInfo& info) {
     if (info.key->selectedGroup() == nullptr || info.key->selectedGroup()->lattice() == nullptr)
         return;
-    if (m_tickPressed) m_tickPressed = false;
+    m_tickPressed = false;
+    m_tangentControlPressed = false;
 }
 
 void TrajectoryTool::doublepressed(const EventInfo& info) {
@@ -188,7 +238,7 @@ void TrajectoryTool::wheel(const WheelEventInfo& info) {
 
 }
 
-void TrajectoryTool::draw(QPainter &painter, VectorKeyFrame *key) {
+void TrajectoryTool::drawUI(QPainter &painter, VectorKeyFrame *key) {
     static QPen pen(QColor(200, 200, 200), 2.0);
     Layer *layer = key->parentLayer();
     int stride = layer->stride(layer->getVectorKeyFramePosition(key));
@@ -204,12 +254,30 @@ void TrajectoryTool::draw(QPainter &painter, VectorKeyFrame *key) {
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(40, 0, 0));
     if (selectedTraj && selectedTraj->hardConstraint()) {
+        float r;
         for (int i = 0; i < stride + 1; ++i) {
-            float alphaLinear = (float)i/(float)stride;
+            qreal alphaLinear = (qreal)i/(qreal)stride;
             selectedTraj->localOffset()->frameChanged(alphaLinear);
             Point::VectorType p = selectedTraj->eval(selectedTraj->group()->spacingAlpha(alphaLinear) + selectedTraj->localOffset()->get());
-            painter.drawEllipse(QRectF(p.x() - 2.0, p.y() - 2.0, 4.0, 4.0));
+            r = (i == 0 || i == stride) ? 8.0 : 4.0;
+            painter.drawEllipse(QRectF(p.x() - r * 0.5, p.y() - r * 0.5, r, r));
         }
+    }
+
+    if (selectedTraj && selectedTraj->hardConstraint()) {
+        // draw tangents
+        Point::VectorType p0 = selectedTraj->cubicApprox().getP0();
+        Point::VectorType p1 = selectedTraj->cubicApprox().getP1();
+        Point::VectorType p2 = selectedTraj->cubicApprox().getP2();
+        Point::VectorType p3 = selectedTraj->cubicApprox().getP3();
+        pen.setColor(QColor(0, 0, 0, 40));
+        pen.setWidthF(1.5);
+        painter.setPen(pen);
+        painter.drawLine(QPointF(p0.x(), p0.y()), QPointF(p1.x(), p1.y()));
+        painter.drawLine(QPointF(p3.x(), p3.y()), QPointF(p2.x(), p2.y()));
+        // painter.setPen(Qt::black);
+        painter.fillRect(QRectF(p1.x() - 4.0, p1.y() - 4.0, 8.0, 8.0), QBrush(QColor(0, 0, 0, 40)));
+        painter.fillRect(QRectF(p2.x() - 4.0, p2.y() - 4.0, 8.0, 8.0), QBrush(QColor(0, 0, 0, 40)));
     }
 }
 
@@ -221,8 +289,8 @@ void TrajectoryTool::drawNonSelectedGroupTraj(QPainter &painter, QPen &pen, Vect
     // draw all trajectories of selected groups
     for (Group *selectedGroup : key->selection().selectedPostGroups()) {
         // force the display of the last and next KF 
-        selectedGroup->drawGrid(painter, 0, REF_POS);
-        selectedGroup->drawGrid(painter, 0, TARGET_POS);
+        // selectedGroup->drawGrid(painter, 0, REF_POS);
+        // selectedGroup->drawGrid(painter, 0, TARGET_POS);
 
         // draw all constrained trajectories
         pen.setColor(QColor(200, 200, 200));
@@ -258,19 +326,23 @@ void TrajectoryTool::drawSelectedTraj(QPainter &painter, QPen &pen, VectorKeyFra
     if (selectedTraj) {
         pen.setColor(QColor(200, 20, 30));
         painter.setPen(pen);
-        painter.drawPath(selectedTraj->approxPathItem());
+        QPainterPath path = applyRigidTransformToPathFromTraj(selectedTraj);
+        // painter.drawPath(selectedTraj->pathItem());
+        painter.drawPath(path);
 
         // Draw the complete trajectory (with previous and next segments)
         if (drawFullPath) {
             Trajectory *traj = key->selection().selectedTrajectoryPtr();
             while (traj->nextTrajectory() != nullptr) {
                 traj = traj->nextTrajectory().get();
-                painter.drawPath(traj->approxPathItem());
+                QPainterPath path = applyRigidTransformToPathFromTraj(traj);
+                painter.drawPath(path);
             } 
             traj = key->selection().selectedTrajectoryPtr();
             while (traj->prevTrajectory() != nullptr) {
                 traj = traj->prevTrajectory().get();
-                painter.drawPath(traj->approxPathItem());
+                QPainterPath path = applyRigidTransformToPathFromTraj(traj);
+                painter.drawPath(path);
             } 
         }
     }
@@ -292,7 +364,7 @@ void TrajectoryTool::drawSelectedTraj(QPainter &painter, QPen &pen, VectorKeyFra
  * @param setSelection if true the parent trajectory is selected in the interface
  * @return the parent trajectory
  */
-std::shared_ptr<Trajectory> TrajectoryTool::pickInGrids(VectorKeyFrame *key, float alpha, int inbetween, int layerIdx, int currentFrame, Point::VectorType pos, bool setSelection) {
+std::shared_ptr<Trajectory> TrajectoryTool::pickInGrids(VectorKeyFrame *key, qreal alpha, int inbetween, int layerIdx, int currentFrame, Point::VectorType pos, bool setSelection) {
     m_trajectories.clear();
 
     // Check if pos intersects one or more grid (from the selected groups)
@@ -300,7 +372,7 @@ std::shared_ptr<Trajectory> TrajectoryTool::pickInGrids(VectorKeyFrame *key, flo
     for (Group *group : key->selection().selectedPostGroups()) {
         UVInfo latticeCoord;
         if (inbetween == 0) latticeCoord.uv = group->lattice()->getUV(pos, REF_POS, latticeCoord.quadKey);
-        else                latticeCoord.uv = key->inbetweens()[inbetween - 1].getUV(group, pos, latticeCoord.quadKey);
+        else                latticeCoord.uv = key->inbetweens()[inbetween].getUV(group, pos, latticeCoord.quadKey);
         if (latticeCoord.quadKey == INT_MAX) continue;
         latticeCoords.insert(group->id(), latticeCoord);
     }
@@ -379,7 +451,7 @@ void TrajectoryTool::propagateTrajectoryForward(Layer *layer, VectorKeyFrame *ke
     }
 }
 
-void propagateTrajectoryBackward(Layer *layer, VectorKeyFrame *key, int layerIdx, int frame, Point::VectorType pos) {
+void TrajectoryTool::propagateTrajectoryBackward(Layer *layer, VectorKeyFrame *key, int layerIdx, int frame, Point::VectorType pos) {
 
 }
 
@@ -387,14 +459,27 @@ void propagateTrajectoryBackward(Layer *layer, VectorKeyFrame *key, int layerIdx
 void TrajectoryTool::moveLatticesTargetConfiguration() {
     if (m_trajectories.empty()) return;
     Group *group;
-    Point::Affine globalRigidTransform = m_trajectories[0]->keyframe()->rigidTransform(1.0);
     VectorKeyFrame *next = m_trajectories[0]->group()->getParentKeyframe()->nextKeyframe();
     for (const std::shared_ptr<Trajectory> &traj : m_trajectories) {
         group = traj->group();
         group->lattice()->precompute();
-        group->lattice()->interpolateARAP(1.0, 1.0, globalRigidTransform);
+        group->lattice()->interpolateARAP(1.0, 1.0, group->globalRigidTransform(1.0f));
         group->lattice()->copyPositions(group->lattice(), INTERP_POS, TARGET_POS);
-        group->lattice()->setArapDirty();
+        group->setGridDirty();
         group->syncTargetPosition(next);
     }
+}
+
+QPainterPath TrajectoryTool::applyRigidTransformToPathFromTraj(Trajectory * traj){
+    static int samples = 100;
+    QPainterPath path;
+    Bezier2D cubicApprox = traj->cubicApprox();
+    Point::VectorType point = traj->group()->globalRigidTransform(0) * cubicApprox.evalArcLength(0);
+    path.moveTo(QE_POINT(point).x(), QE_POINT(point).y());
+    for (int i = 1; i < samples; ++i){
+        qreal alpha = qreal(i) / (samples - 1);
+        Point::VectorType point = traj->group()->globalRigidTransform(alpha) * cubicApprox.evalArcLength(alpha);
+        path.lineTo(QE_POINT(point).x(), QE_POINT(point).y());
+    }
+    return path;
 }

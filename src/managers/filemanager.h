@@ -1,12 +1,19 @@
 /*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2013-2014 Matt Chiawen Chang
- * SPDX-FileCopyrightText: 2018-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
+
+Pencil - Traditional Animation Software
+Copyright (C) 2005-2007 Patrick Corrieri & Pascal Naidon
+Copyright (C) 2013-2014 Matt Chiawen Chang
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation;
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+*/
 
 #ifndef OBJECTSAVELOADER_H
 #define OBJECTSAVELOADER_H
@@ -28,13 +35,21 @@ public:
     bool load(const QString& fileName, Editor *editor, DialsAndKnobs *dk);
     bool save(const QString& filename, Editor *editor, DialsAndKnobs *dk);
     
+    void createWorkingDir();
+    void deleteWorkingDir();
+
     void resetFileName() { m_currentFileName = "untitled"; }
 
     QString fileName() const { return m_currentFileName; }
     QString filePath() const { return m_filePath; }
 
 private:
+    bool removeTmpDirectory(const QString &dirName);
+    void unzip(const QString& strZipFile, const QString& strUnzipTarget);
+
+private:
     QString m_currentFileName;
+    QString m_lastTempFolder;
 
     QString m_filePath;       //< where this object come from. (empty if new project)
     QString m_workingDirPath; //< the folder that pclx will uncompress to.

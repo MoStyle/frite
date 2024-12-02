@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef __UVHASH_H__
 #define __UVHASH_H__
 
@@ -12,10 +6,11 @@
 #include <QHash>
 
 #include "point.h"
+#include "utils/utils.h"
 
 struct UVInfo {
     int quadKey = INT_MAX;
-    Point::VectorType uv; 
+    Point::VectorType uv;
 };
 
 // Maps a unique point index to a UVInfo struct
@@ -23,22 +18,17 @@ struct UVInfo {
 // TODO: bake the id in the point?
 class UVHash : public QHash<unsigned int, UVInfo> {
 public:
-    inline virtual unsigned int cantor(unsigned int a, unsigned int b) const {
-        return 0.5 * (a + b) * (a + b + 1) + b;
-    }
-
     inline virtual bool has(unsigned int strokeIdx, unsigned int i) const {
-        return contains(cantor(strokeIdx, i));
+        return contains(Utils::cantor(strokeIdx, i));
     }
 
     inline virtual QHash::iterator add(unsigned int strokeIdx, unsigned int i, const UVInfo &uv) {
-        return insert(cantor(strokeIdx, i), uv);
+        return insert(Utils::cantor(strokeIdx, i), uv);
     }
 
     inline virtual UVInfo get(unsigned int strokeIdx, unsigned int i) const {
-        return value(cantor(strokeIdx, i));
+        return value(Utils::cantor(strokeIdx, i));
     }
-
 private:
 };
 

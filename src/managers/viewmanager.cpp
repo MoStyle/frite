@@ -1,13 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2012-2014 Matthew Chiawen Chang
- * SPDX-FileCopyrightText: 2018-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
-
 #include "viewmanager.h"
 
 static qreal gZoomingList[] =
@@ -61,6 +51,11 @@ const QTransform &ViewManager::getView() const
     return m_view;
 }
 
+void ViewManager::setDevicePixelRatio(qreal ratio) { 
+    m_devicePixelRatio = ratio;
+    createViewTransform();
+}
+
 void ViewManager::createViewTransform()
 {
     QTransform c;
@@ -76,7 +71,8 @@ void ViewManager::createViewTransform()
     qreal flipY = m_isFlipVertical ? -1.0 : 1.0;
 
     QTransform s;
-    s.scale(m_scale * flipX, m_scale * flipY);
+    
+    s.scale(m_scale * flipX / m_devicePixelRatio, m_scale * flipY / m_devicePixelRatio);
 
     m_view = t * s * r * c;
 }

@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef __PENTOOL_H__
 #define __PENTOOL_H__
 
@@ -20,21 +14,22 @@ public:
     PenTool(QObject *parent, Editor *editor);
     virtual ~PenTool();
 
-    Tool::ToolType toolType() const override;
+    virtual Tool::ToolType toolType() const override;
 
-    QGraphicsItem *graphicsItem() override;
+    virtual QCursor makeCursor(float scaling=1.0f) const override;
 
-    QCursor makeCursor(float scaling=1.0f) const override;
-
-    void pressed(const EventInfo& info) Q_DECL_OVERRIDE;
-    void moved(const EventInfo& info) Q_DECL_OVERRIDE;
-    void released(const EventInfo& info) Q_DECL_OVERRIDE;
+    virtual void pressed(const EventInfo& info) Q_DECL_OVERRIDE;
+    virtual void moved(const EventInfo& info) Q_DECL_OVERRIDE;
+    virtual void released(const EventInfo& info) Q_DECL_OVERRIDE;
+    virtual void wheel(const WheelEventInfo& info) Q_DECL_OVERRIDE;
 
     QPen &pen() { return m_pen; }
 
     Stroke *currentStroke() const { return m_currentStroke.get(); }
 
-private:
+protected:
+    void addPoint(const EventInfo &info);
+
     QBrush m_brush;
     QPen m_pen;
     StrokePtr m_currentStroke;

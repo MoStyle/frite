@@ -1,13 +1,7 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef __SELECTION_H__
 #define __SELECTION_H__
 
-#include <QHash>
+#include <QMap>
 #include "strokeinterval.h"
 #include "trajectory.h"
 
@@ -26,16 +20,17 @@ public:
     VectorKeyFrame *keyframe() const { return m_keyframe; }
 
     bool selectionEmpty() const { return m_selectedPostGroups.isEmpty() && m_selectedPreGroups.isEmpty() && m_selectedStrokeIntervals.isEmpty(); }
+    bool isPostGroupSelected(int groupId) const { return m_selectedPostGroups.contains(groupId); }
 
-    const QHash<int, Group *> &selectedPostGroups() const { return m_selectedPostGroups; }
-    const QHash<int, Group *> &selectedPreGroups() const { return m_selectedPreGroups; }
+    const QMap<int, Group *> &selectedPostGroups() const { return m_selectedPostGroups; }
+    const QMap<int, Group *> &selectedPreGroups() const { return m_selectedPreGroups; }
     const StrokeIntervals &selectedStrokeIntervals() const { return m_selectedStrokeIntervals; }
     const std::shared_ptr<Trajectory> &selectedTrajectory() const { return m_selectedTrajectory; }
     Trajectory * selectedTrajectoryPtr() const { return m_selectedTrajectory.get(); }
 
     void addGroup(Group *group, unsigned int groupType);
-    void addGroups(const QHash<int, Group *> &groups, unsigned int groupType);
-    void setGroup(const QHash<int, Group *> &groups, unsigned int groupType);
+    void addGroups(const QMap<int, Group *> &groups, unsigned int groupType);
+    void setGroup(const QMap<int, Group *> &groups, unsigned int groupType);
     void addStroke(unsigned int strokeId);
     void addInterval(unsigned int strokeId, Interval interval);
     void addIntervals(unsigned int strokeId, Intervals interval);
@@ -59,8 +54,8 @@ private:
 
     VectorKeyFrame *m_keyframe;
 
-    QHash<int, Group *> m_selectedPostGroups;
-    QHash<int, Group *> m_selectedPreGroups;
+    QMap<int, Group *> m_selectedPostGroups;
+    QMap<int, Group *> m_selectedPreGroups;
 
     StrokeIntervals m_selectedStrokeIntervals;
 

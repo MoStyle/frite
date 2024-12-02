@@ -1,10 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef TABLETCANVAS_H
 #define TABLETCANVAS_H
 
@@ -19,10 +12,13 @@
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLPaintDevice>
 #include <QOpenGLContext>
+#include <QOpenGLTexture>
 #include <QSurface>
 
 #include <QList>
 #include <QImage>
+
+#include <chrono>
 
 QT_BEGIN_NAMESPACE
 class QPaintEvent;
@@ -35,7 +31,7 @@ class VectorKeyFrame;
 class KeyFrame;
 class KeyframedTransform;
 
-class TabletCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
+class TabletCanvas : public QOpenGLWidget, protected QOpenGLExtraFunctions {
     Q_OBJECT
 
    public:
@@ -45,15 +41,21 @@ class TabletCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
     enum TransformMode { Translation, Rotation, Scaling };
     Q_ENUM(TransformMode)
 
+    enum MaskOcclusionMode { MaskOcclude=0, MaskGrayOut };
+    enum DisplayMode { StrokeColor=0, PointColor, VisibilityThreshold };
+
     TabletCanvas();
     ~TabletCanvas();
 
     void setEditor(Editor *editor) { m_editor = editor; }
 
     QPixmap *getPixmap() { return &m_pixmap; }
-    QGraphicsScene *graphicsScene() { return m_graphicsScene; }
     QGraphicsScene *fixedGraphicsScene() { return m_fixedGraphicsScene; }
-    CanvasView *canvasView() { return m_graphicsView; }
+    CanvasView *fixedCanvasView() { return m_fixedGraphicsView; }
+
+    const QFont &canvasFont() const { return m_canvasFont; }
+    int fontSize() const { return m_canvasFont.pointSize(); } 
+    void setFontSize(int size) { m_canvasFont.setPointSize(size); }
 
     void setAlphaChannelValuator(Valuator type) { m_alphaChannelValuator = type; }
     void setColorSaturationValuator(Valuator type) { m_colorSaturationValuator = type; }
@@ -63,23 +65,35 @@ class TabletCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
         m_deviceActive = event->type() == QEvent::TabletEnterProximity ? 1 : 0;
         updateCursor(event);
     }
+    const QMatrix4x4 &projMat() const { return m_projMat; }
     void setCanvasRect(int width, int height);
     QRect canvasRect() const { return m_canvasRect; }
-    int maximum(int a, int b) { return a > b ? a : b; }
 
     void setDrawGroupColor(bool drawGroupColor) { m_drawGroupColor = drawGroupColor; }
     void setDrawPreGroupGhosts(bool drawPreGroupGhosts) { m_drawPreGroupGhosts = drawPreGroupGhosts; }
+    void setMaskOcclusionMode(MaskOcclusionMode occlusionMode) { m_maskOcclusionMode = occlusionMode; }
+    void setDisplayVisibility(bool displayVisibility) { m_displayVisibility = displayVisibility; }
+    void setDisplayDepth(bool displayDepth) { m_displayDepth = displayDepth; }
+    void setDisplayMask(bool displayMask) { m_displayMask = displayMask; }
+    void setDisplayMode(DisplayMode mode) { m_displayMode = mode; }
+    void setDisplaySelectedGroupsLifetime(bool displaySelectedGroupsLifetime) { m_displaySelectedGroupsLifetime = displaySelectedGroupsLifetime; }
+
+    void showInfoMessage(const QString &message, int durationMs);
 
     void initializeFBO(int w, int h);
-    void paintGLInit(int offW, int offH, bool drawOffscreen);
+    void paintGLInit(int offW, int offH, bool drawOffscreen, bool exportFrames=false);
     void paintGLRelease(bool drawOffscreen);
 
-    void drawCanvas(QPainter &painter, bool useGL = true, bool drawOffscreen = false);
-    void drawKeyFrame(QPainter &painter, VectorKeyFrame *keyframe, int frame, int inbetween, int stride, const QColor &color, qreal opacity, qreal tintFactor, bool useGL = true);
-    void drawKeyFrame(QPainter &painter, VectorKeyFrame *keyframe, const QColor &color, qreal opacity, qreal tintFactor, GroupType type, bool useGL = true);
+    void drawCanvas(bool exportFrames=false);
+    void drawKeyFrame(VectorKeyFrame *keyframe, int frame, int inbetween, int stride, const QColor &color, qreal opacity, qreal tintFactor, bool drawMasks=true);
+    void drawKeyFrame(VectorKeyFrame *keyframe, const QColor &color, qreal opacity, qreal tintFactor, GroupType type, bool drawMasks=true);
+    void drawGrid(Group *group);
+    void drawCircleCursor(QVector2D nudge);
     void drawToolGizmos(QPainter &painter);
     void drawBackground(QPainter &painter);
     QImage grabCanvasFramebuffer() const { return m_offscreenRenderFBO->toImage(); }
+    void resolveMSFramebuffer() { QOpenGLFramebufferObject::blitFramebuffer(m_offscreenRenderFBO, m_offscreenRenderMSFBO); }
+    DisplayMode displayMode() const { return m_displayMode; }
 
     void debugReport();
    signals:
@@ -104,9 +118,9 @@ class TabletCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
     void updateCursor(bool b);
     void updateDrawAggregate(bool draw);
     void selectAll();
-    void deselectAll();
     void loadBackgrounds(QString dir);
-
+    void toggleDisplayMask(bool b);
+    QColor sampleColorMap(double depth);
 
    protected:
     void mousePressEvent(QMouseEvent *event) Q_DECL_OVERRIDE;
@@ -129,19 +143,20 @@ class TabletCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
    private:
     void initPixmap();
     void paintPixmap(QPainter &painter, QTabletEvent *event);
-    void drawInterpolatedKeyFrame(QPainter &painter, Layer *layer, int frame, int inbetween, int stride, qreal opacity, qreal tintFactor, bool next, bool useGL = true);
-    void drawOnionSkins(QPainter &painter, Layer *layer, bool useGL = true);
-    void drawSelectedGroupsLifetime(QPainter &painter, Layer *layer, VectorKeyFrame *keyframe, int frame, int inbetween, int stride, bool useGL = true);
-    void drawGroup(QPainter &painter, VectorKeyFrame *keyframe, Group *group, float alpha, int inbetween, int stride, double opacity, const QColor &color, double tint, double strokeWeightFactor=1.0, bool useGL = true);
-    void drawSelectedGroups(QPainter &painter, VectorKeyFrame *keyframe, GroupType type, float alpha, int inbetween, int stride, double opacity, const QColor &color, double tint, double strokeWeightFactor=1.0, bool useGL = true);
-    void drawSelectedGroups(QPainter &painter, VectorKeyFrame *keyframe, GroupType type, double opacity, const QColor &color, double tint, double strokeWeightFactor=1.0, bool useGL = true);
-    void drawExportOnionSkins(QPainter &painter, Layer *layer, bool useGL = true);
+    void drawOnionSkins(Layer *layer);
+    void drawSelectedGroupsLifetime(Layer *layer, VectorKeyFrame *keyframe, int frame, int inbetween, int stride);
+    void drawGroup(VectorKeyFrame *keyframe, Group *group, qreal alpha, int inbetween, int stride, double opacity, const QColor &color, double tint, double strokeWeightFactor=1.0);
+    void drawSelectedGroups(VectorKeyFrame *keyframe, GroupType type, qreal alpha, int inbetween, int stride, double opacity, const QColor &color, double tint, double strokeWeightFactor=1.0);
+    void drawSelectedGroups(VectorKeyFrame *keyframe, GroupType type, double opacity, const QColor &color, double tint, double strokeWeightFactor=1.0);
+    void drawMask(VectorKeyFrame *keyframe, Group *group, int inbetween, int stride, qreal alpha, int depth);
+    void drawExportOnionSkins(Layer *layer);
+    void startDrawSplatStrokes();
+    void endDrawSplatStrokes();
 
     Qt::BrushStyle brushPattern(qreal value);
     void updateBrush(const QTabletEvent *event);
     void updateCursor(const QTabletEvent *event);
     QCursor crossCursor(qreal width);
-    void updateSelectionZones();
 
     VectorKeyFrame *currentKeyFrame();
     VectorKeyFrame *prevKeyFrame();
@@ -151,10 +166,12 @@ class TabletCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
     Valuator m_lineWidthValuator;
 
     QPixmap m_pixmap; // background pixmap
+    QImage m_infernoColorMap;
 
     // !deprecated, need to remove
     QBrush m_brush;
     QPen m_pen;                     
+    QFont m_canvasFont;
 
     QList<QPixmap> m_backgrounds;
 
@@ -166,28 +183,38 @@ class TabletCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
     qreal m_currentAlpha;
     int m_inbetween, m_stride;
 
-    bool m_drawGroupColor = false;
-    bool m_drawPreGroupGhosts = false;
+    bool m_drawGroupColor;
+    bool m_drawPreGroupGhosts;
+    bool m_displayVisibility;
+    bool m_displayDepth;
+    bool m_displayMask;
+    bool m_displaySelectedGroupsLifetime;
+    bool m_temporarySelectTool;
+    MaskOcclusionMode m_maskOcclusionMode;
+    DisplayMode m_displayMode;
 
     Editor *m_editor = nullptr;
-
-    // Scene that follows the canvas
-    CanvasView *m_graphicsView = nullptr;
-    QGraphicsScene *m_graphicsScene = nullptr;
 
     // Scene that is fixed to the camera
     CanvasView *m_fixedGraphicsView = nullptr;
     QGraphicsScene *m_fixedGraphicsScene = nullptr;
 
+    QString m_infoMessageText;
+    QTimer m_infoMessageDuration;
+
     // GL
     QMatrix4x4 m_projMat;
     QOpenGLPaintDevice *m_paintDevice;
-    QOpenGLShaderProgram *m_strokeProgram, *m_displayProgram;
-    QOpenGLVertexArrayObject m_displayVAO;
-    QOpenGLBuffer m_displayVBO;
+    QOpenGLShaderProgram *m_strokeProgram, *m_displayProgram, *m_maskProgram, *m_splattingProgram, *m_displayMaskProgram, *m_displayGridProgram, *m_cursorProgram;
+    QOpenGLVertexArrayObject m_displayVAO, m_cursorVAO;
+    QOpenGLBuffer m_displayVBO, m_cursorVBO;
     GLint m_strokeViewLocation, m_strokeProjLocation, m_strokeWinSize, m_strokeZoom, m_strokeThetaEpsilon, m_strokeColor;
     GLint m_displayTextureLocation;
-    QOpenGLFramebufferObject *m_offscreenRenderFBO = nullptr;
+    QOpenGLFramebufferObject *m_offscreenRenderMSFBO = nullptr, *m_offscreenRenderFBO = nullptr; // Multisampled and regular offscreen FBO
+    GLuint m_offscreenTexture;
+    GLint m_blendEq, m_sFactor, m_dFactor;
+    
+    QOpenGLTexture *m_pointTex, *m_maskTex;
 
     struct PointT {
         QPointF pixel;

@@ -1,9 +1,37 @@
 <RCC>
     <qresource prefix="/" lang="GLSL">
+        <file>shaders/blur.frag</file>
+        <file>shaders/blur.vert</file>
+        <file>shaders/density.frag</file>
+        <file>shaders/density.vert</file>
+        <file>shaders/quad.frag</file>
+        <file>shaders/quad.vert</file>
+        <file>shaders/density.geom</file>
+        <file>shaders/initDensityMap.frag</file>
+        <file>shaders/initDensityMap.vert</file>
+        <file>shaders/getDensity.frag</file>
+        <file>shaders/getDensity.vert</file>
         <file>shaders/display.frag</file>
         <file>shaders/display.vert</file>
+        <file>shaders/checkStroke.frag</file>
+        <file>shaders/checkStroke.vert</file>
+        <file>shaders/checkStrokeInBulk.frag</file>
+        <file>shaders/checkStrokeInBulk.vert</file>
+        <file>shaders/erode.frag</file>
+        <file>shaders/erode.vert</file>
+        <file>shaders/splatting.frag</file>
+        <file>shaders/splatting.vert</file>
         <file>shaders/stroke.vert</file>
         <file>shaders/stroke.geom</file>
         <file>shaders/stroke.frag</file>
+        <file>shaders/mask.vert</file>
+        <file>shaders/mask.frag</file>
+        <file>shaders/fill.vert</file>
+        <file>shaders/fill.frag</file>
+        <file>shaders/latticeFill.vert</file>
+        <file>shaders/latticeFill.geom</file>
+        <file>shaders/latticeFill.frag</file>
+        <file>shaders/cursor.vert</file>
+        <file>shaders/cursor.frag</file>
     </qresource>
 </RCC>

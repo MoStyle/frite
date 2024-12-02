@@ -1,16 +1,10 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include <QGraphicsItem>
 
 #include "trajectory.h"
 
 class TrajectoryTickItem : public QGraphicsRectItem {
 public:
-    TrajectoryTickItem(Trajectory *traj, float linearAlpha, int idx);
+    TrajectoryTickItem(Trajectory *traj, qreal linearAlpha, int idx);
 
     void updatePos();
 

@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "lassotool.h"
 
 #include "layermanager.h"
@@ -11,8 +5,8 @@
 #include "canvascommands.h"
 #include "keycommands.h"
 #include "strokeinterval.h"
-#include "canvassceneitems.h"
 #include "selectionmanager.h"
+#include "tabletcanvas.h"
 #include "dialsandknobs.h"
 
 static dkBool k_strokeMode("Lasso->Stroke Mode", true);
@@ -92,13 +86,16 @@ void LassoTool::released(const EventInfo& info) {
             m_editor->undoStack()->push(new SetCorrespondenceCommand(m_editor, layer, prevFrame, currentFrame, prev->selectedGroup(POST)->id(), newGroup->id()));
         }
         m_editor->undoStack()->endMacro();
+        info.key->makeInbetweensDirty();
     } else {
-        m_editor->undoStack()->push(new SetSelectedGroupCommand(m_editor, layer, currentFrame, -1, type));
+        m_editor->undoStack()->push(new SetSelectedGroupCommand(m_editor, layer, currentFrame, Group::ERROR_ID, type));
         if (type == PRE) m_editor->undoStack()->push(new RemoveCorrespondenceCommand(m_editor, layer, prevFrame, prev->selectedGroup(POST)->id()));
     }
 
     m_lasso = QPolygonF();
     m_lassoSelectedPoints.clear();
+
+    m_editor->tabletCanvas()->update();
 }
 
 void LassoTool::makeSelection(const EventInfo& info, GroupType type, VectorKeyFrame *prev, StrokeIntervals &selection) {
@@ -110,7 +107,7 @@ void LassoTool::makeSelection(const EventInfo& info, GroupType type, VectorKeyFr
     // Complete stroke selection
     if (k_strokeMode) {
         // select strokes that have at least one point in the lasso
-        m_editor->selection()->selectStrokes(info.key, [&](const StrokePtr &stroke) {
+        m_editor->selection()->selectStrokes(info.key, 0, [&](const StrokePtr &stroke) {
             if (info.key->preGroups().containsStroke(stroke->id())) return false;
             for (int i = 0; i < stroke->size(); ++i) {
                 if (m_lasso.containsPoint(QPointF(stroke->points()[i]->pos().x(),stroke->points()[i]->pos().y()), Qt::OddEvenFill)) {

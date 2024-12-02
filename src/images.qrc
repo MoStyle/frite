@@ -1,7 +1,15 @@
 <RCC>
     <qresource prefix="/">
         <file>images/fries.png</file>
-        <file>images/test_pixmap.png</file>
+        <file>images/brush/brush1.png</file>
+        <file>images/brush/brush2.png</file>
+        <file>images/brush/brush3.png</file>
+        <file>images/brush/brush4.png</file>
+        <file>images/brush/charcoal.png</file>
+        <file>images/brush/chunky.png</file>
+        <file>images/brush/hazy.png</file>
+        <file>images/brush/speckle.png</file>
+        <file alias="inferno">images/other/inferno.png</file>
     </qresource>
     <qresource prefix="/dark">
         <file alias="add">images/dark/dark_add.svg</file>
@@ -44,6 +52,7 @@
         <file alias="onion">images/dark/dark_onion_skin_options.svg</file>
         <file alias="onionOff">images/dark/dark_onionOff.svg</file>
         <file alias="onionOn">images/dark/dark_onionOn.svg</file>
+        <file alias="mask">images/dark/dark_mask.svg</file>
         <file alias="eye">images/dark/dark_eye.svg</file>
         <file alias="duplicate">images/dark/dark_duplicate.svg</file>
         <file alias="select_rect">images/dark/dark_tool_rect_selection.svg</file>
@@ -65,6 +74,7 @@
         <file alias="trajectory">images/dark/dark_trajectory.svg</file>
         <file alias="spacing">images/dark/dark_spacing.svg</file>
         <file alias="halves">images/dark/dark_spacing_halves.svg</file>
+        <file alias="ordering">images/dark/dark_ordering.svg</file>
     </qresource>
     <qresource prefix="/light">
         <file alias="add">images/light/light_add.svg</file>
@@ -107,6 +117,7 @@
         <file alias="onion">images/light/light_onion_skin_options.svg</file>
         <file alias="onionOff">images/light/light_onionOff.svg</file>
         <file alias="onionOn">images/light/light_onionOn.svg</file>
+        <file alias="mask">images/light/light_mask.svg</file>
         <file alias="eye">images/light/light_eye.svg</file>
         <file alias="duplicate">images/light/light_duplicate.svg</file>
         <file alias="select_rect">images/light/light_tool_rect_selection.svg</file>
@@ -124,5 +135,6 @@
         <file alias="trajectory">images/light/light_trajectory.svg</file>
         <file alias="spacing">images/light/light_spacing.svg</file>
         <file alias="halves">images/light/light_spacing_halves.svg</file>
+        <file alias="ordering">images/light/light_ordering.svg</file>
     </qresource>
 </RCC>

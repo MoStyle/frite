@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef __REGISTRATIONLASSOTOOL_H__
 #define __REGISTRATIONLASSOTOOL_H__
 
@@ -20,7 +14,7 @@ public:
     void toggled(bool on) override;
     void released(const EventInfo& info) override;
     void doublepressed(const EventInfo& info) override;
-    void draw(QPainter &painter, VectorKeyFrame *key) override;
+    void drawGL(VectorKeyFrame *key, qreal alpha) override;
 
 private:
 

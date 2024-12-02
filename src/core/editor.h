@@ -1,11 +1,19 @@
 /*
- * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
- * SPDX-FileCopyrightText: 2013-2014 Matt Chiawen Chang
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
+
+Pencil - Traditional Animation Software
+Copyright (C) 2005-2007 Patrick Corrieri & Pascal Naidon
+Copyright (C) 2013-2014 Matt Chiawen Chang
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation;
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+*/
 
 #ifndef EDITOR_H
 #define EDITOR_H
@@ -13,10 +21,12 @@
 #include "vectorkeyframe.h"
 
 #include "stroke.h"
+#include "strokeinterval.h"
+
+#include <memory>
+#include <set>
 
 #include <QDomElement>
-#include <memory>
-
 #include <QtWidgets>
 
 class QDragEnterEvent;
@@ -29,13 +39,14 @@ class PlaybackManager;
 class ViewManager;
 class InterpolationManager;
 class ToolsManager;
-class CanvasSceneManager;
 class FixedSceneManager;
 class SelectionManager;
 class TimeLine;
 class TabletCanvas;
 class BackupElement;
 class StyleManager;
+class LayoutManager;
+class VisibilityManager;
 class KeyFrame;
 class Stroke;
 class Layer;
@@ -69,14 +80,16 @@ class Editor : public QObject {
     GridManager *grid() const { return m_gridManager; }
     RegistrationManager *registration() const { return m_registrationManager; }
     ToolsManager *tools() const { return m_toolsManager; }
-    CanvasSceneManager *scene() const { return m_canvasSceneManager; }
     FixedSceneManager *fixedScene() const { return m_fixedSceneManager; }
     SelectionManager *selection() const { return m_selectionManager; }
+    LayoutManager *layout() const { return m_layoutManager; }
+    VisibilityManager *visibility() const { return m_visibilityManager; }
 
     void setTabletCanvas(TabletCanvas *canvas);
     TabletCanvas *tabletCanvas() { return m_tabletCanvas; }
 
-    qreal alpha(int frame);
+    qreal alpha(int frame, Layer *layer=nullptr);
+    qreal currentAlpha();
     void scrubTo(int frameNumber);
 
     void addStroke(StrokePtr stroke);
@@ -88,6 +101,7 @@ class Editor : public QObject {
     int addKeyFrame(int layerNumber, int frameNumber, bool updateCurves=true);
     void removeKeyFrame(int layerNumber, int frameIndex);
     int updateInbetweens(VectorKeyFrame *keyframe, int inbetween, int stride);
+    void deleteAllEmptyGroups(int layerNumber, int frameIndex);
 
     QUndoStack *undoStack() const { return m_undoStack; }
 
@@ -106,6 +120,8 @@ class Editor : public QObject {
     VectorKeyFrame *currentKeyFrame();
     VectorKeyFrame *prevKeyFrame();
 
+    void registerFromRestPosition(VectorKeyFrame * key, bool registerToNextKeyframe);
+
    signals:
     void updateTimeLine();
     void updateBackup();
@@ -114,6 +130,7 @@ class Editor : public QObject {
     void changeThinLinesButton(bool);
 
     void currentFrameChanged(int n);
+    void currentKeyFrameChanged();
     void timelineUpdate(int n);
     void alphaChanged(qreal alpha);
 
@@ -141,6 +158,9 @@ class Editor : public QObject {
     void paste();
     void cut();
 
+    void increaseCurrentKeyExposure();
+    void decreaseCurrentKeyExposure();
+
     void setEqMode(int value);
     void setTintFactor(int value);
     void setGhostMode(bool ghostMode);
@@ -148,22 +168,33 @@ class Editor : public QObject {
     // update qgraphicsscenes and the group qwidget
     void updateUI(VectorKeyFrame *key);
 
-    // Actions
+    //  ******* ACTIONS *******
     void deselectInAllLayers();
     void clearARAPWarp();
     void toggleOnionSkin();
+    void toggleHasMask();
     void makeTrajectoryC1Continuous();
     void makeGroupFadeOut();
+    std::set<int> splitGridIntoSingleConnectedComponent();
     void regularizeLattice();
     void registerFromRestPosition();
     void registerFromTargetPosition();
+    void changeGridSize();
     void expandGrid();
-    void copyGroupToNextKeyFrame();
+    void clearGrid();
+    void copyGroupToNextKeyFrame(bool makeBreakdown);
     void convertToBreakdown();
-    void bakeNextPreGroup();
-    void removeNextPreGroup();
+    void toggleCrossFade();
+    void clearCrossFade();
     void deleteGroup();
+    void deleteAllEmptyGroups();
     void makeInbetweensDirty();
+    void toggleDrawSplat(bool drawSplat);
+    void drawInNewGroup();
+    void suggestLayoutChange();
+    void propagateLayoutForward();
+    void propagateLayoutBackward();
+    void suggestVisibilityThresholds();
     void debugReport();
 
    private:
@@ -176,22 +207,18 @@ class Editor : public QObject {
     GridManager *m_gridManager = nullptr;
     RegistrationManager *m_registrationManager = nullptr;
     ToolsManager *m_toolsManager = nullptr;
-    CanvasSceneManager *m_canvasSceneManager = nullptr;
     FixedSceneManager *m_fixedSceneManager = nullptr;
     SelectionManager *m_selectionManager = nullptr;
+    LayoutManager *m_layoutManager = nullptr;
+    VisibilityManager *m_visibilityManager = nullptr;
 
     QUndoStack *m_undoStack;
 
     bool m_ghostMode = false;
     bool m_exporting = false;
 
-    bool mIsAutosave = true;
-    int autosaveNumber = 12;
-
-    bool mReWarp = true;
-
-    // clipboard
-    bool m_clipboardBitmapOk;
+    std::vector<StrokeIntervals> m_clipboardStrokes;    
+    VectorKeyFrame *m_clipboardKeyframe; // TODO: shared ptr in case kf is destroyed between copy & paste
 
     // Onion skins parameters
     EqualizerValues m_eqValues;

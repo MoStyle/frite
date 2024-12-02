@@ -1,14 +1,8 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "handtool.h"
 #include "editor.h"
 #include "layermanager.h"
 #include "playbackmanager.h"
-#include "canvasscenemanager.h"
+
 #include "viewmanager.h"
 #include "tabletcanvas.h"
 #include "arap.h"
@@ -23,10 +17,6 @@ HandTool::~HandTool() {
 
 Tool::ToolType HandTool::toolType() const {
     return Tool::Hand;
-}
-
-QGraphicsItem *HandTool::graphicsItem() {
-    return nullptr;
 }
 
 QCursor HandTool::makeCursor(float scaling) const {

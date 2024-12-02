@@ -1,10 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "layercommands.h"
 #include "layermanager.h"
 #include "layer.h"
@@ -150,4 +143,26 @@ void SwitchOnionCommand::undo()
 void SwitchOnionCommand::redo()
 {
     m_layerManager->layerAt(m_layerIndex)->switchShowOnion();
+}
+
+SwitchHasMaskCommand::SwitchHasMaskCommand(LayerManager *layerManager, int layer, QUndoCommand *parent)
+    : QUndoCommand(parent)
+    , m_layerManager(layerManager)
+    , m_layerIndex(layer)
+{
+    setText(QString("Toggle layer %1 mask").arg(layer));
+}
+
+SwitchHasMaskCommand::~SwitchHasMaskCommand()
+{
+}
+
+void SwitchHasMaskCommand::undo()
+{
+    m_layerManager->layerAt(m_layerIndex)->switchHasMask();
+}
+
+void SwitchHasMaskCommand::redo()
+{
+    m_layerManager->layerAt(m_layerIndex)->switchHasMask();
 }

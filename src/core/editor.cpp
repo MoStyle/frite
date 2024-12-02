@@ -1,10 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "editor.h"
 
 #include <Eigen/Geometry>
@@ -20,7 +13,6 @@
 #include "dialsandknobs.h"
 #include "gridmanager.h"
 #include "toolsmanager.h"
-#include "canvasscenemanager.h"
 #include "fixedscenemanager.h"
 #include "registrationmanager.h"
 #include "keycommands.h"
@@ -34,25 +26,38 @@
 #include "tabletcanvas.h"
 #include "timeline.h"
 #include "viewmanager.h"
+#include "layoutmanager.h"
+#include "visibilitymanager.h"
 #include "arap.h"
+#include "tools/localmasktool.h"
 #include "utils/stopwatch.h"
 
 static dkBool k_autoBreak("Options->Layers->Auto-Break", true);
-dkSlider k_deformRange("Warp->Range of deformation", 75.0f, 1.0f, 100.0f, 2.0f);
 static dkBool k_exportGrid("Options->Export->Draw grid", false);
-static dkInt k_regularizationIt("Options->Grid->Manual regularization itetations", 100, 0, 1000, 1);
+static dkBool k_exportHighRes("Options->Export->High res export", true);
+static dkInt k_regularizationIt("Options->Grid->Manual regularization iterations", 100, 0, 1000, 1);
+static dkBool k_onXs("Options->On X's", false);
+static dkInt k_Xs("Options->X's", 2, 1, 5, 1);
+
+dkSlider k_deformRange("Warp->Range of deformation", 75.0f, 1.0f, 1000.0f, 2.0f);
+dkSlider k_splatSamplingRate("Options->Drawing->Splat sampling rate", 1, 1, 100, 1);
+dkBool k_useJitter("Options->Drawing->Jitter->Jitter", false);
+dkSlider k_jitterTranslation("Options->Drawing->Jitter->Translation", 4, 1, 20, 1);
+dkFloat k_jitterRotation("Options->Drawing->Jitter->Rotation", 0.2, 0.01, M_PI, 0.01);
+dkInt k_jitterDuration("Options->Drawing->Jitter->Duration", 1, 1, 10, 1);
+
+extern dkInt k_cellSize;
 extern dkBool k_exportOnlyCurSegment;
 extern dkInt k_exportFrom;
 extern dkInt k_registrationRegularizationIt;
-
+extern dkBool k_drawSplat;
 extern dkBool k_debug_out;
 extern dkBool k_exportOnionSkinMode;
 extern dkBool k_useDeformAsSource;
 
-
 static VectorKeyFrame *g_clipboardVectorKeyFrame = nullptr;
 
-Editor::Editor(QObject *parent) : QObject(parent) { m_clipboardBitmapOk = false; }
+Editor::Editor(QObject *parent) : QObject(parent) { }
 
 Editor::~Editor() { }
 
@@ -66,9 +71,10 @@ bool Editor::init(TabletCanvas *canvas) {
     m_gridManager = new GridManager(this);
     m_registrationManager = new RegistrationManager(this);
     m_toolsManager = new ToolsManager(this);
-    m_canvasSceneManager = new CanvasSceneManager(this);
     m_fixedSceneManager = new FixedSceneManager(this);
     m_selectionManager = new SelectionManager(this);
+    m_layoutManager = new LayoutManager(this);
+    m_visibilityManager = new VisibilityManager(this);
 
     m_layerManager->setEditor(this);
     m_playbackManager->setEditor(this);
@@ -76,15 +82,13 @@ bool Editor::init(TabletCanvas *canvas) {
     m_gridManager->setEditor(this);
     m_registrationManager->setEditor(this);
     m_toolsManager->setEditor(this);
-    m_canvasSceneManager->setEditor(this);
     m_fixedSceneManager->setEditor(this);
     m_selectionManager->setEditor(this);
+    m_layoutManager->setEditor(this);
+    m_visibilityManager->setEditor(this);
 
-    connect(m_toolsManager, SIGNAL(toolChanged(Tool *)), m_canvasSceneManager, SLOT(toolChanged(Tool *)));
-    connect(this, SIGNAL(currentFrameChanged(int)), m_canvasSceneManager, SLOT(frameChanged(int)));
     connect(this, SIGNAL(currentFrameChanged(int)), m_fixedSceneManager, SLOT(frameChanged(int)));
     connect(this, SIGNAL(timelineUpdate(int)), m_fixedSceneManager, SLOT(frameChanged(int)));
-    connect(this, SIGNAL(timelineUpdate(int)), m_canvasSceneManager, SLOT(frameChanged(int)));
 
     m_undoStack = new QUndoStack(this);
     connect(m_undoStack, &QUndoStack::indexChanged, this, &Editor::updateTimeLine);
@@ -92,8 +96,12 @@ bool Editor::init(TabletCanvas *canvas) {
     setTabletCanvas(canvas);
 
     m_toolsManager->initTools();
-    m_canvasSceneManager->setScene(m_tabletCanvas->graphicsScene());
     m_fixedSceneManager->setScene(m_tabletCanvas->fixedGraphicsScene());
+    connect(&k_drawSplat, SIGNAL(valueChanged(bool)), this, SLOT(toggleDrawSplat(bool)));
+    connect(&k_splatSamplingRate, &dkSlider::valueChanged, this, [&] { toggleDrawSplat(true); });
+    connect(&k_onXs, SIGNAL(valueChanged(bool)), this, SLOT(makeInbetweensDirty(void)));
+
+    m_clipboardKeyframe = nullptr;
 
     return true;
 }
@@ -101,6 +109,9 @@ bool Editor::init(TabletCanvas *canvas) {
 void Editor::setTabletCanvas(TabletCanvas *canvas) {
     m_tabletCanvas = canvas;
     connect(m_undoStack, &QUndoStack::indexChanged, m_tabletCanvas, &TabletCanvas::updateCurrentFrame);
+    connect(&k_useJitter, SIGNAL(valueChanged(bool)), m_tabletCanvas, SLOT(updateCurrentFrame(void)));
+    connect(&k_jitterTranslation, SIGNAL(valueChanged(int)), m_tabletCanvas, SLOT(updateCurrentFrame(void)));
+    connect(&k_jitterRotation, SIGNAL(valueChanged(double)), m_tabletCanvas, SLOT(updateCurrentFrame(void)));
     connect(m_toolsManager, SIGNAL(toolChanged(Tool *)), canvas, SLOT(updateCursor(void)));
     connect(&k_deformRange, SIGNAL(valueChanged(int)), canvas, SLOT(updateCursor(void)));
 
@@ -116,11 +127,14 @@ bool Editor::load(QDomElement &element, const QString &path) {
         m_tabletCanvas->setCanvasRect(width, height);
     }
 
+    m_tabletCanvas->hide();
     if (!m_layerManager->load(element, path)) return false;
+    m_tabletCanvas->show();
 
     emit currentFrameChanged(playback()->currentFrame());
     QCoreApplication::processEvents(); // not very elegent way but we need the previous to be processed immediately 
 
+    m_toolsManager->currentTool()->toggled(true);
     m_fixedSceneManager->updateKeyChart(m_layerManager->currentLayer()->getLastKey(m_playbackManager->currentFrame()));
 
     return true;
@@ -143,71 +157,93 @@ void Editor::cut() {
     m_undoStack->endMacro();
 }
 
-// !TODO
 void Editor::copy() {
-    qDebug() << "COPY";
-    // Layer *layer = m_layerManager->layerAt(layers()->currentLayerIndex());
-    // if (layer != nullptr) {
-    //     if (m_tabletCanvas->somethingSelected()) {
-    //         g_clipboardVectorKeyFrame = layer->getLastVectorKeyFrameAtFrame(m_playbackManager->currentFrame(),
-    //                                                                         0)
-    //                                         ->copy(m_tabletCanvas->getSelection()->bounds());  // copy part of the
-    //                                         image
-    //     } else {
-    //         g_clipboardVectorKeyFrame = layer->getLastVectorKeyFrameAtFrame(m_playbackManager->currentFrame(), 0)
-    //                                         ->copy();  // copy the whole image
-    //     }
-    //     m_clipboardBitmapOk = true;
-    // }
-}
+    Layer *layer = m_layerManager->currentLayer();
+    VectorKeyFrame *keyframe = prevKeyFrame();
+    m_clipboardKeyframe = keyframe;
+    m_clipboardStrokes.clear();
 
-void Editor::paste() {
-    Layer *layer = m_layerManager->layerAt(layers()->currentLayerIndex());
-    if (layer != nullptr) {
-        if (g_clipboardVectorKeyFrame != nullptr) {
-            m_undoStack->beginMacro("Paste");
-            int prevkey = m_playbackManager->currentFrame();
-            if (!layer->keyExists(m_playbackManager->currentFrame())) {
-                if (k_autoBreak) {
-                    addKey();
-                } else {
-                    prevkey = layer->getPreviousKeyFramePosition(m_playbackManager->currentFrame());
-                    if (m_playbackManager->currentFrame() >= layer->getMaxKeyFramePosition())
-                        m_undoStack->push(new MoveKeyCommand(this, m_layerManager->currentLayerIndex(), layer->getMaxKeyFramePosition(),
-                                                             m_playbackManager->currentFrame() + 1));
-                }
-            }
-            if (layer->keyExists(prevkey)) {
-                m_undoStack->push(new PasteCommand(this, layers()->currentLayerIndex(), prevkey, g_clipboardVectorKeyFrame));
-            }
-            m_undoStack->endMacro();
-        }
+    for (Group *group : keyframe->selection().selectedPostGroups()) {
+        m_clipboardStrokes.push_back(group->strokes());
     }
 }
 
-// !TODO
-void Editor::deselectAll() { 
+void Editor::paste() {
+    Layer *layer = m_layerManager->currentLayer();
+    VectorKeyFrame *keyframe = prevKeyFrame();
+    int layerIdx = m_layerManager->currentLayerIndex();
+    int frame = m_playbackManager->currentFrame();
 
+    if (m_clipboardKeyframe == nullptr || m_clipboardKeyframe == keyframe || m_clipboardStrokes.empty()) return;
+
+    m_undoStack->beginMacro("Paste groups");
+    for (const StrokeIntervals &strokeIntervals : m_clipboardStrokes) {
+        m_undoStack->push(new AddGroupCommand(this, layerIdx, frame));
+        Group *newGroup = keyframe->postGroups().lastGroup();
+        for (auto it = strokeIntervals.constBegin(); it != strokeIntervals.constEnd(); ++it) {
+            Stroke *clipboardStroke = m_clipboardKeyframe->stroke(it.key());
+            for (const Interval &interval : it.value()) {
+                StrokePtr newStroke = std::make_shared<Stroke>(*clipboardStroke, keyframe->pullMaxStrokeIdx(), interval.from(), interval.to());
+                m_undoStack->push(new DrawCommand(this, layerIdx, frame, newStroke, newGroup->id(), false));
+            }
+        }
+    }
+    m_undoStack->endMacro();
 }
 
-qreal Editor::alpha(int frame) {
+void Editor::increaseCurrentKeyExposure() {
+    m_undoStack->push(new ChangeExposureCommand(this, m_layerManager->currentLayerIndex(), m_playbackManager->currentFrame(), 1));
+}
+
+void Editor::decreaseCurrentKeyExposure() {
     Layer *layer = m_layerManager->currentLayer();
+    if (layer->stride(layer->getLastKeyFramePosition(m_playbackManager->currentFrame())) <= 1) return;
+    m_undoStack->push(new ChangeExposureCommand(this, m_layerManager->currentLayerIndex(), m_playbackManager->currentFrame(), -1));
+}
+
+/**
+ * Deselect all groups and trajectories in the current keyframe  
+ */
+void Editor::deselectAll() { 
+    VectorKeyFrame *key = prevKeyFrame();
+    int layer = m_layerManager->currentLayerIndex();
+    int currentFrame = m_playbackManager->currentFrame();
+    if (key == nullptr || m_toolsManager->currentTool()->needEscapeFocus()) return;
+    m_undoStack->beginMacro("Deselect All");
+    m_undoStack->push(new SetSelectedGroupCommand(this, layer, currentFrame, Group::ERROR_ID));
+    m_undoStack->push(new SetSelectedTrajectoryCommand(this, layer, currentFrame, nullptr));
+    m_undoStack->endMacro();
+}
+
+/**
+ * Return the current time step (in [0,1]) between the last and next keyframe.  
+ * If the current frame is keyframe, return 0
+ * If the current frame is after the last keyframe of the layer return 1
+ * Otherwise the value is linearly interpolated between 0 and 1
+ */
+qreal Editor::alpha(int frame, Layer *layer) {
+    if (layer == nullptr) layer = m_layerManager->currentLayer();
     if (layer) {
         if (frame >= layer->getMaxKeyFramePosition()) return 1.0;
-
-        int prevKey;
-        if (layer->keyExists(frame))
-            prevKey = frame;
-        else
-            prevKey = layer->getPreviousKeyFramePosition(frame);
+        if (k_onXs) frame -= k_Xs - 1 - (frame % (k_Xs));
+        int prevKey = layer->getLastKeyFramePosition(frame);
         int nextKey = layer->getNextKeyFramePosition(frame);
-        // nextKey -= 1;
         if (nextKey == prevKey + 1) return 0.0;
         return qreal(frame - prevKey) / (nextKey - prevKey);
     }
     return 0.0;
 }
 
+/**
+ * Return the alpha value of the current frame in the timeline
+ */
+qreal Editor::currentAlpha() {
+    return alpha(m_playbackManager->currentFrame());
+}
+
+/**
+ * Change the current frame 
+ */
 void Editor::scrubTo(int frame) {
     if (frame < 1) {
         frame = 1;
@@ -273,25 +309,48 @@ void Editor::removeKeyFrame(int layerNumber, int frameIndex) {
  * Update the specified inbetween frame of the given keyframe.
  * If the stride has changed, all inbetweens between the keyframe and the next one are reset.
  * @param keyframe The keyframe storing the inbetweens
- * @param inbetween The relative index of the inbetween to update (1 <= inbetween <= stride)
+ * @param inbetween The relative index of the inbetween to update (0 <= inbetween <= stride)
  * @param stride The number of frames between the keyframe and the next one
 */
 int Editor::updateInbetweens(VectorKeyFrame *keyframe, int inbetween, int stride) {
     if (inbetween > stride) inbetween = stride;
-    if (keyframe->inbetweens().empty() || stride != keyframe->inbetweens().size()) {
+    if (keyframe->inbetweens().empty() || stride != keyframe->inbetweens().size() - 1) {
         // qDebug() << "Inbetweens size: " << keyframe->inbetweens().size() << "  != stride: " << stride;
         keyframe->clearInbetweens();
         keyframe->initInbetweens(stride);
     }
-    if (stride == 0 || inbetween <= 0) return inbetween;
+    if (stride == 0 || inbetween < 0) return inbetween;
     if (!m_exporting && QOpenGLContext::currentContext() != m_tabletCanvas->context()) m_tabletCanvas->makeCurrent();
     keyframe->bakeInbetween(this, keyframe->parentLayer()->getVectorKeyFramePosition(keyframe), inbetween, stride);
     return inbetween;
 }
 
+void Editor::deleteAllEmptyGroups(int layerNumber, int frameIndex) {
+    VectorKeyFrame *key = m_layerManager->layerAt(layerNumber)->getLastVectorKeyFrameAtFrame(frameIndex, 0);
+    std::vector<int> postGroupsToRemove, preGroupsToRemove;
+    for (Group *group : key->postGroups()) {
+        if (group->id() != Group::MAIN_GROUP_ID && group->size() == 0) {
+            postGroupsToRemove.push_back(group->id());
+        }
+    }
+    for (Group *group : key->preGroups()) {
+        if (group->size() == 0) {
+            preGroupsToRemove.push_back(group->id());
+        }
+    }
+    m_undoStack->beginMacro("Delete empty groups");
+    for (int id : postGroupsToRemove) {
+        m_undoStack->push(new RemoveGroupCommand(this, layerNumber, frameIndex, id, POST));
+    }
+    for (int id : preGroupsToRemove) {
+        m_undoStack->push(new RemoveGroupCommand(this, layerNumber, frameIndex, id, PRE));
+    }
+    m_undoStack->endMacro();
+}
+
 void Editor::exportFrames(const QString &path, QSize exportSize, bool transparency) {
     QFileInfo info(path);
-    int maxFrame = m_layerManager->maxFrame()-1;
+    int maxFrame = m_layerManager->maxFrame();
     int nbDigits = QString::number(maxFrame).length();
 
     srand(0);
@@ -304,19 +363,17 @@ void Editor::exportFrames(const QString &path, QSize exportSize, bool transparen
     }
 
     if (k_exportOnionSkinMode) maxFrame = k_exportFrom;
+    if (!k_exportHighRes) exportSize = QSize(m_tabletCanvas->canvasRect().width(), m_tabletCanvas->canvasRect().height());
     
     // Destroy buffers made with the OpenGLCanvas default FBO
-    for (Layer *layer : m_layerManager->layers()) {
-        for (auto it = layer->keysBegin(); it != layer->keysEnd(); ++it) {
-            it.value()->destroyBuffers();
-        }
-    }
+    m_layerManager->destroyBuffers();
 
     if (QOpenGLContext::currentContext() != m_tabletCanvas->context()) m_tabletCanvas->makeCurrent();
     m_exporting = true;
     for (int frame = k_exportFrom; frame <= maxFrame; frame++) {
         QString frameNumberString = QString::number(frame);
         while (frameNumberString.length() < nbDigits) frameNumberString.prepend("0");
+
 
         double scaleW = exportSize.width() / m_tabletCanvas->canvasRect().width();
         double scaleH = exportSize.height() / m_tabletCanvas->canvasRect().height();
@@ -334,8 +391,8 @@ void Editor::exportFrames(const QString &path, QSize exportSize, bool transparen
             m_tabletCanvas->initializeFBO(exportSize.width(), exportSize.height());
             painter.scale(scaleW, scaleH);
             painter.translate( m_tabletCanvas->canvasRect().width()/2,  m_tabletCanvas->canvasRect().height()/2);
-            m_tabletCanvas->paintGLInit(exportSize.width(), exportSize.height(), true);
-            m_tabletCanvas->drawCanvas(painter, true, true);
+            m_tabletCanvas->paintGLInit(exportSize.width(), exportSize.height(), true, true);
+            m_tabletCanvas->drawCanvas(true);
             m_tabletCanvas->paintGLRelease(true);
             painter.restore();
 
@@ -352,7 +409,7 @@ void Editor::exportFrames(const QString &path, QSize exportSize, bool transparen
                 VectorKeyFrame *keyframe = layer->getLastKey(frame);
                 int inbetween = layer->inbetweenPosition(frame);
                 int stride = layer->stride(frame);
-                float alphaLinear = alpha(frame);
+                qreal alphaLinear = alpha(frame);
                 for (Group *group : keyframe->postGroups()) {
                     group->setShowGrid(true);
                     if (group->lattice()->isArapPrecomputeDirty()) group->lattice()->precompute();
@@ -386,10 +443,14 @@ void Editor::exportFrames(const QString &path, QSize exportSize, bool transparen
             m_tabletCanvas->initializeFBO(exportSize.width(), exportSize.height());
             painter.scale(scaleW, scaleH);
             painter.translate( m_tabletCanvas->canvasRect().width() / 2,  m_tabletCanvas->canvasRect().height() / 2);
-            m_tabletCanvas->paintGLInit(exportSize.width(), exportSize.height(), true);
-            m_tabletCanvas->drawCanvas(painter, true, true);
+            painter.beginNativePainting();
+            m_tabletCanvas->paintGLInit(exportSize.width(), exportSize.height(), true, true);
+            m_tabletCanvas->drawCanvas(true);
             m_tabletCanvas->paintGLRelease(true);
+            painter.endNativePainting();
             painter.restore();
+
+            m_tabletCanvas->resolveMSFramebuffer();
 
             QImage fboImage = m_tabletCanvas->grabCanvasFramebuffer();
             QImage image(fboImage.constBits(), fboImage.width(), fboImage.height(), QImage::Format_ARGB32);
@@ -397,14 +458,14 @@ void Editor::exportFrames(const QString &path, QSize exportSize, bool transparen
 
             painter.save();
             painter.scale(scaleW, scaleH);
-            painter.translate( m_tabletCanvas->canvasRect().width()/2,  m_tabletCanvas->canvasRect().height()/2);
+            painter.translate(m_tabletCanvas->canvasRect().width()/2, m_tabletCanvas->canvasRect().height()/2);
             m_tabletCanvas->drawToolGizmos(painter);
             if (k_exportGrid) {
                 Layer *layer = m_layerManager->currentLayer();
                 VectorKeyFrame *keyframe = layer->getLastKey(frame);
                 int inbetween = layer->inbetweenPosition(frame);
                 int stride = layer->stride(frame);
-                float alphaLinear = alpha(frame);
+                qreal alphaLinear = alpha(frame);
 
                 if (inbetween == 0 && frame == 9) {
                     VectorKeyFrame *previousKeyframe = layer->getVectorKeyFrameAtFrame(layer->getPreviousKeyFramePosition(frame));
@@ -427,6 +488,7 @@ void Editor::exportFrames(const QString &path, QSize exportSize, bool transparen
             painter.restore();
 
             painter.save();
+            painter.translate(m_tabletCanvas->canvasRect().width()/2, m_tabletCanvas->canvasRect().height()/2);
             m_tabletCanvas->fixedGraphicsScene()->render(&painter, targetRect);
             painter.restore();
             painter.end();
@@ -436,6 +498,7 @@ void Editor::exportFrames(const QString &path, QSize exportSize, bool transparen
         std::cout << "Frame " << frame << " has been exported" << std::endl;
     }
     m_exporting = false;
+    m_tabletCanvas->initializeFBO(m_viewManager->canvasSize().width(), m_viewManager->canvasSize().height());
     m_tabletCanvas->doneCurrent();
 }
 
@@ -447,6 +510,37 @@ VectorKeyFrame *Editor::currentKeyFrame() {
 VectorKeyFrame *Editor::prevKeyFrame() {
     Layer *layer = m_layerManager->currentLayer();
     return layer->getLastVectorKeyFrameAtFrame(m_playbackManager->currentFrame(), 0);
+}
+
+void Editor::registerFromRestPosition(VectorKeyFrame * key, bool registerToNextKeyframe){
+    if (key == nullptr) return;
+    
+    if (registerToNextKeyframe) {
+        VectorKeyFrame *target = key->nextKeyframe();
+
+        int lastFrame = layers()->currentLayer()->getMaxKeyFramePosition();
+        int currentFrame = layers()->currentLayer()->getVectorKeyFramePosition(key);
+        if (layers()->currentLayer()->isVectorKeyFrameSelected(key) && layers()->currentLayer()->getLastKeyFrameSelected() == currentFrame){
+            int frame = layers()->currentLayer()->getFirstKeyFrameSelected();
+            target = layers()->currentLayer()->getVectorKeyFrameAtFrame(frame);
+        }
+        m_registrationManager->setRegistrationTarget(target);
+    }
+    const QMap<int, Group *> &groups = key->selection().selectedPostGroups().empty() ? key->groups(POST) : key->selection().selectedPostGroups();
+    bool multipleGroupsSelected = groups.size() > 1;
+    Point::Affine scalingMat;
+    if (multipleGroupsSelected) {
+        m_registrationManager->preRegistration(groups, TARGET_POS);
+        scalingMat.setIdentity();
+        scalingMat.scale(m_registrationManager->preRegistrationScaling());
+    }
+    for (Group *group : groups) {
+        m_registrationManager->registration(group, TARGET_POS, TARGET_POS, !multipleGroupsSelected);
+        if (multipleGroupsSelected) group->lattice()->setScaling(scalingMat);
+    }
+    if (registerToNextKeyframe) m_registrationManager->clearRegistrationTarget();
+    key->makeInbetweensDirty();
+    m_tabletCanvas->update();
 }
 
 void Editor::duplicateKey() {
@@ -484,47 +578,20 @@ void Editor::addStroke(StrokePtr stroke) {
     if (stroke->points().size() < 2 || layer == nullptr) return;
 
     m_undoStack->beginMacro("Update keyframe");
-    int prevkey = m_playbackManager->currentFrame();
-    // Drawing on a non-keyframe (need to add a keyframe first)
-    if (!layer->keyExists(prevkey) || prevkey == layer->getMaxKeyFramePosition()) {
-        if (k_autoBreak) {
-            addKey();
-        } else {
-            prevkey = layer->getPreviousKeyFramePosition(m_playbackManager->currentFrame());
-            if (m_playbackManager->currentFrame() >= layer->getMaxKeyFramePosition())
-                m_undoStack->push(new MoveKeyCommand(this, m_layerManager->currentLayerIndex(), layer->getMaxKeyFramePosition(),
-                                                        m_playbackManager->currentFrame() + 1));
-        }
-        // we can't set the id of the stroke before this point when we're drawing on a not yet existing keyframe
-        VectorKeyFrame *keyframe = layer->getVectorKeyFrameAtFrame(prevkey);
-        stroke->resetID(keyframe->pullMaxStrokeIdx());
-        int group = Group::MAIN_GROUP_ID;
-        GroupType type = POST;
-        if (!keyframe->selection().selectedPostGroups().empty()) {
-            group = keyframe->selection().selectedPostGroups().constBegin().value()->id();
-            type = POST;
-        } else if (!keyframe->selection().selectedPreGroups().empty()) {
-            group = keyframe->selection().selectedPreGroups().constBegin().value()->id();
-            type = PRE;
-        }
-        m_undoStack->push(new DrawCommand(this, m_layerManager->currentLayerIndex(), prevkey, stroke, group, true, type));
-
-    } 
-    // Drawing on an existing keyframe
-    else { 
-        VectorKeyFrame *keyframe = layer->getVectorKeyFrameAtFrame(prevkey);
-        int group = Group::MAIN_GROUP_ID;
-        GroupType type = POST;
-        if (!keyframe->selection().selectedPostGroups().empty()) {
-            group = keyframe->selection().selectedPostGroups().constBegin().value()->id();
-            type = POST;
-        } else if (!keyframe->selection().selectedPreGroups().empty()) {
-            group = keyframe->selection().selectedPreGroups().constBegin().value()->id();
-            type = PRE;
-        } 
-        mReWarp = true;
-        m_undoStack->push(new DrawCommand(this, m_layerManager->currentLayerIndex(), prevkey, stroke, group, true, type));
+    int currentFrame = m_playbackManager->currentFrame();
+    VectorKeyFrame *keyframe = layer->getLastVectorKeyFrameAtFrame(currentFrame, 0);
+    int group = Group::MAIN_GROUP_ID;
+    GroupType type = POST;
+    if (!keyframe->selection().selectedPostGroups().empty()) {
+        group = keyframe->selection().selectedPostGroups().constBegin().value()->id();
+        type = POST;
+    } else if (!keyframe->selection().selectedPreGroups().empty()) {
+        group = keyframe->selection().selectedPreGroups().constBegin().value()->id();
+        type = PRE;
     }
+
+    m_undoStack->push(new DrawCommand(this, m_layerManager->currentLayerIndex(), currentFrame, stroke, group, true, type));
+
     m_undoStack->endMacro();
 }
 
@@ -572,20 +639,20 @@ void Editor::setGhostMode(bool ghostMode) {
 
 void Editor::updateUI(VectorKeyFrame *key) {
     m_fixedSceneManager->updateKeyChart(key);                                           // Tell the spacing chart widget to show the selected group chart
-    m_canvasSceneManager->selectedGroupChanged(key->selection().selectedPostGroups());  // Selected group(s) border (UI)
     emit m_tabletCanvas->groupsModified(POST);                                          // Update the group list UI
     emit m_tabletCanvas->groupsModified(PRE);                                           // Update the group list UI
 }
 
 void Editor::deselectInAllLayers() {
-    Layer *layer = m_layerManager->currentLayer();
-    int layerIdx = m_layerManager->currentLayerIndex();
-    for (auto it = layer->keysBegin(); it != layer->keysEnd(); ++it) {
-        m_undoStack->beginMacro("Deselect All");
-        m_undoStack->push(new SetSelectedGroupCommand(this, layerIdx, it.key(), Group::ERROR_ID));
-        m_undoStack->push(new SetSelectedTrajectoryCommand(this, layerIdx, it.key(), nullptr));
-        m_undoStack->endMacro();
+    m_undoStack->beginMacro("Deselect All");
+    for (int l = m_layerManager->layersCount() - 1; l >= 0; l--) {
+        Layer *layer = m_layerManager->layerAt(l);
+        for (auto it = layer->keysBegin(); it != layer->keysEnd(); ++it) {
+            m_undoStack->push(new SetSelectedGroupCommand(this, l, it.key(), Group::ERROR_ID));
+            m_undoStack->push(new SetSelectedTrajectoryCommand(this, l, it.key(), nullptr));
+        }
     }
+    m_undoStack->endMacro();
 }
 
 // TODO: set as qcommand
@@ -618,6 +685,10 @@ void Editor::toggleOnionSkin() {
     m_undoStack->push(new SwitchOnionCommand(m_layerManager, m_layerManager->currentLayerIndex()));
 }
 
+void Editor::toggleHasMask() {
+    m_undoStack->push(new SwitchHasMaskCommand(m_layerManager, m_layerManager->currentLayerIndex()));
+}
+
 void Editor::makeTrajectoryC1Continuous() {
     m_undoStack->push(new MakeTrajectoryC1Command(this, m_layerManager->currentLayerIndex(), m_playbackManager->currentFrame(), prevKeyFrame()->selection().selectedTrajectory()));
     m_tabletCanvas->update();
@@ -631,30 +702,84 @@ void Editor::makeGroupFadeOut() {
     m_tabletCanvas->update();
 }
 
+/**
+ * Break the selected groups into new groups with a single connected component each.
+ * If the selected group is already has only one connected component then nothing happens. 
+ */
+std::set<int> Editor::splitGridIntoSingleConnectedComponent() {
+    Layer *layer = m_layerManager->currentLayer();
+    int layerIdx = m_layerManager->currentLayerIndex();
+    int currentFrame = m_playbackManager->currentFrame();
+    VectorKeyFrame *key = prevKeyFrame();
+    int quadKey; QuadPtr quad;
+    std::vector<int> groupsToRemove;
+    std::set<int> newGroups;
+    const QMap<int, Group *> &groups = key->selection().selectedPostGroups().empty() ? key->postGroups() : key->selection().selectedPostGroups();
+
+    m_undoStack->beginMacro("Break group");
+    for (Group *group : groups) {
+        // Get list of CC
+        std::vector<std::vector<int>> connectedComponents;
+        group->lattice()->getConnectedComponents(connectedComponents); // TODO: check flag
+
+        if (connectedComponents.size() <= 1) continue;
+
+        // Make new groups & grids
+        for (const std::vector<int> &connectedComponent : connectedComponents) {
+            m_undoStack->push(new AddGroupCommand(this, layerIdx, currentFrame));
+            Group *newGroup = key->postGroups().lastGroup();
+            newGroup->setGrid(new Lattice(*group->lattice(), connectedComponent));
+            newGroups.insert(newGroup->id());
+
+            // Get list of strokes segments in the cc
+            for (auto strokeIt = group->strokes().begin(); strokeIt != group->strokes().end(); ++strokeIt) {
+                Intervals newIntervals;
+                for (Interval &interval : strokeIt.value()) {
+                    if (newGroup->lattice()->contains(key->stroke(strokeIt.key())->points()[interval.from()]->pos(), REF_POS, quad, quadKey)) {
+                        newIntervals.append(interval);
+                        // TODO copy instead of recomputing
+                        m_gridManager->bakeStrokeInGrid(newGroup->lattice(), key->stroke(strokeIt.key()), interval.from(), interval.to());
+                        newGroup->lattice()->bakeForwardUV(key->stroke(strokeIt.key()), interval, newGroup->uvs());
+                    }
+                }
+                if (!newIntervals.empty()) {
+                    newGroup->addStroke(strokeIt.key(), newIntervals);
+                }
+            }
+        }
+        groupsToRemove.push_back(group->id());
+    }
+
+    deselectAll();
+    
+    for (int groupId : groupsToRemove) {
+        if (groupId == Group::MAIN_GROUP_ID) {
+            m_undoStack->push(new ClearMainGroupCommand(this, layerIdx, currentFrame));
+        } else {
+            m_undoStack->push(new RemoveGroupCommand(this, layerIdx, currentFrame, groupId, POST));
+        }
+    }
+    m_undoStack->endMacro();
+
+    key->makeInbetweensDirty();
+
+    return newGroups;
+}
+
 void Editor::regularizeLattice() {
     VectorKeyFrame *key = prevKeyFrame();
     for (Group *group : key->selection().selectedPostGroups()) {
         if (group->lattice() == nullptr) continue;
         Arap::regularizeLattice(*group->lattice(), k_useDeformAsSource ? DEFORM_POS : REF_POS, TARGET_POS, k_regularizationIt, true, false);
-        group->lattice()->setArapDirty();
+        group->setGridDirty();
         key->makeInbetweensDirty();
     }
     m_tabletCanvas->update();
 }
 
 void Editor::registerFromRestPosition() {
-    VectorKeyFrame *key = prevKeyFrame();
-    bool registerToNextKeyframe = m_registrationManager->registrationTargetEmpty();
-    if (registerToNextKeyframe) m_registrationManager->setRegistrationTarget(key->nextKeyframe());
-    const QHash<int, Group *> &groups = key->selection().selectedPostGroups().empty() ? key->groups(POST) : key->selection().selectedPostGroups();
-    bool multipleGroupsSelected = groups.size() > 1;
-    if (multipleGroupsSelected) m_registrationManager->preRegistration(groups, TARGET_POS);
-    for (Group *group : groups) {
-        m_registrationManager->registration(group, TARGET_POS, TARGET_POS, !multipleGroupsSelected);
-    }
-    if (registerToNextKeyframe) m_registrationManager->clearRegistrationTarget();
-    key->makeInbetweensDirty();
-    m_tabletCanvas->update();
+    VectorKeyFrame *key = currentKeyFrame();
+    registerFromRestPosition(key, m_registrationManager->registrationTargetEmpty());
 }
 
 void Editor::registerFromTargetPosition() {
@@ -669,28 +794,52 @@ void Editor::registerFromTargetPosition() {
     m_tabletCanvas->update();
 }
 
+void Editor::changeGridSize() {
+    bool ok;
+    int cellSize = QInputDialog::getInt(m_tabletCanvas, tr("Change grid size"), tr("Size (px)"), 1, 1, 100, 1, &ok);
+    if (!ok) return;
+    VectorKeyFrame *key = prevKeyFrame();
+    for (Group *group : key->selection().selectedPostGroups()) {
+        m_gridManager->constructGrid(group, m_viewManager, cellSize);
+    }
+    key->makeInbetweensDirty();
+    m_tabletCanvas->update();
+}
+
 void Editor::expandGrid() {
     VectorKeyFrame *key = prevKeyFrame();
     for (Group *group : key->selection().selectedPostGroups()) {
         std::vector<int> newQuads;
-        for (QuadPtr q : group->lattice()->quads()) q->setFlag(false);
+        for (QuadPtr q : group->lattice()->quads()) q->setMiscFlag(false);
         m_gridManager->addOneRing(group->lattice(), newQuads);
         m_gridManager->propagateDeformToOneRing(group->lattice(), newQuads);
-        group->lattice()->setArapDirty();
+        group->setGridDirty();
         group->lattice()->setBackwardUVDirty(true);
     }
     key->makeInbetweensDirty();
     m_tabletCanvas->update();
 }
 
-void Editor::copyGroupToNextKeyFrame() {
+void Editor::clearGrid() {
+    VectorKeyFrame *key = prevKeyFrame();
+    for (Group *group : key->selection().selectedPostGroups()) {
+        m_gridManager->constructGrid(group, m_viewManager, k_cellSize);
+    }
+    key->makeInbetweensDirty();
+    m_tabletCanvas->update();
+}
+
+void Editor::copyGroupToNextKeyFrame(bool makeBreakdown) {
     Layer *layer = m_layerManager->currentLayer();
     int currentFrame = m_playbackManager->currentFrame();
     VectorKeyFrame *key = prevKeyFrame();
-    if (currentFrame == layer->getMaxKeyFramePosition() - 1) return;
     VectorKeyFrame *next = key->nextKeyframe();
+    if (next == layer->getVectorKeyFrameAtFrame(layer->getMaxKeyFramePosition())) {
+        m_undoStack->push(new AddKeyCommand(this, layers()->currentLayerIndex(), layer->getMaxKeyFramePosition()));
+    }
+    next = key->nextKeyframe();
     for (Group *group : key->selection().selectedPostGroups()) {
-        key->copyDeformedGroup(next, group);
+        key->copyDeformedGroup(next, group, makeBreakdown);
     }
     m_tabletCanvas->update();
 }
@@ -708,20 +857,49 @@ void Editor::convertToBreakdown() {
     m_tabletCanvas->update();
 }
 
-void Editor::bakeNextPreGroup() {
+/**
+ * Toggle cross-fade for all selected groups.
+ * If no group is selected, toggle cross-fade for all groups.
+ */
+void Editor::toggleCrossFade() {
     VectorKeyFrame *key = prevKeyFrame();
-    for (Group *group : key->selection().selectedPostGroups()) {
-        key->makeNextPreGroup(this, group);
+    VectorKeyFrame *nextKey = key->nextKeyframe();
+    Layer *layer = m_layerManager->currentLayer();
+    int layerIdx = m_layerManager->currentLayerIndex();
+    int currentFrame = m_playbackManager->currentFrame();
+    int nextFrame = layer->getVectorKeyFramePosition(nextKey);
+    const QMap<int, Group *> &groups = key->selection().selectedPostGroups().empty() ? key->postGroups() : key->selection().selectedPostGroups();
+    for (Group *group : groups) {
+        Group *nextPre = group->nextPreGroup();
+        if (nextPre != nullptr) {
+            m_undoStack->push(new RemoveCorrespondenceCommand(this, layerIdx, currentFrame, group->id()));
+            // TODO remove intra corresp?
+            m_undoStack->push(new RemoveGroupCommand(this, layerIdx, nextFrame, nextPre->id(), PRE));
+        } else {
+            key->toggleCrossFade(this, group);
+        }
     }
     m_tabletCanvas->update();
 }
 
-void Editor::removeNextPreGroup() {
+/**
+ * Clear cross-fade for all selected groups.
+ * If no group is selected, Clear cross-fade for all groups.
+ */
+void Editor::clearCrossFade() {
     VectorKeyFrame *key = prevKeyFrame();
+    VectorKeyFrame *nextKey = key->nextKeyframe();
+    Layer *layer = m_layerManager->currentLayer();
     int layerIdx = m_layerManager->currentLayerIndex();
     int currentFrame = m_playbackManager->currentFrame();
-    for (Group *group : key->selection().selectedPostGroups()) {
+    int nextFrame = layer->getVectorKeyFramePosition(nextKey);
+    const QMap<int, Group *> &groups = key->selection().selectedPostGroups().empty() ? key->postGroups() : key->selection().selectedPostGroups();
+    for (Group *group : groups) {
+        Group *nextPre = group->nextPreGroup();
         m_undoStack->push(new RemoveCorrespondenceCommand(this, layerIdx, currentFrame, group->id()));
+        if (nextPre != nullptr) {
+            m_undoStack->push(new RemoveGroupCommand(this, layerIdx, nextFrame, nextPre->id(), PRE));
+        }
     }
     m_tabletCanvas->update();
 }
@@ -742,14 +920,131 @@ void Editor::deleteGroup() {
     key->selection().clearSelectedTrajectory();
     // m_undoStack->push(new SetSelectedGroupCommand(m_editor, layerIdx, currentFrame, -1));
     m_undoStack->endMacro();
-    m_canvasSceneManager->selectedGroupChanged(QHash<int, Group *>());
     m_fixedSceneManager->updateKeyChart(key);
+}
+
+void Editor::deleteAllEmptyGroups() {
+    int layerIdx = m_layerManager->currentLayerIndex();
+    int currentFrame = m_playbackManager->currentFrame();
+    deleteAllEmptyGroups(layerIdx, currentFrame);
 }
 
 void Editor::makeInbetweensDirty() {
     Layer *layer = m_layerManager->currentLayer();
     for (auto it = layer->keysBegin(); it != layer->keysEnd(); ++it) {
         it.value()->makeInbetweensDirty();
+    }
+}
+
+void Editor::toggleDrawSplat(bool drawSplat) {
+    // Update all strokes buffers
+    if (!m_exporting && QOpenGLContext::currentContext() != m_tabletCanvas->context()) m_tabletCanvas->makeCurrent();
+    for (int layerIndex = 0; layerIndex < m_layerManager->layersCount(); ++layerIndex) {
+        Layer *layer = m_layerManager->layerAt(layerIndex);
+        if (layer == nullptr) continue;
+        for (auto keyframe = layer->keysBegin(); keyframe != layer->keysEnd(); ++keyframe) {
+            keyframe.value()->updateBuffers();
+        }
+    }
+    m_tabletCanvas->update();
+}
+
+/**
+ * Add a new empty group and select it. If there is already an empty group, it is directly selected instead of adding a new empty group
+ */
+void Editor::drawInNewGroup() {
+    int layerIdx = m_layerManager->currentLayerIndex();
+    int currentFrame = m_playbackManager->currentFrame();
+    VectorKeyFrame *key = prevKeyFrame();
+
+    if (m_toolsManager->currentTool()->needReturnFocus()) return;
+
+    deleteAllEmptyGroups();
+
+    // qDebug() << "last group id: " << key->postGroups().lastGroup()->id();
+    // qDebug() << "lasy key: " << key->postGroups().lastKey();
+
+    if (key->postGroups().lastGroup() == nullptr || key->postGroups().lastGroup()->size() > 0) {
+        m_undoStack->push(new AddGroupCommand(this, layerIdx, currentFrame));
+    }
+
+    m_undoStack->push(new SetSelectedGroupCommand(this, layerIdx, currentFrame, key->postGroups().lastGroup()->id()));
+}
+
+/**
+ * 
+ */
+void Editor::suggestLayoutChange() {
+    int layerIdx = m_layerManager->currentLayerIndex();
+    int currentFrame = m_playbackManager->currentFrame();
+    Layer *layer = m_layerManager->currentLayer();
+    VectorKeyFrame *key = prevKeyFrame();
+
+
+    if (key->nextKeyframe() != nullptr) {
+        OrderPartial prevOrder = key->orderPartials().lastPartialAt(alpha(currentFrame));
+        GroupOrder order(key);
+        double score = m_layoutManager->computeBestLayout(key, key->nextKeyframe(), order);
+        if (score >= 0.0) {
+            qDebug() << "OPTIMAL LAYOUT CHANGE DETECTED | Score = " << score;
+            StopWatch s("Compute best layout");
+            int optimalInbetween = m_layoutManager->computeBestLayoutChangeLocation(key, order);
+            s.stop();
+            int stride = layer->stride(currentFrame);
+            double dt = 1.0 / stride;
+            double partialAlpha = (optimalInbetween - 0.5) * dt;
+            qDebug() << "Optimal t = " << partialAlpha;
+            order.setParentKeyFrame(key);
+            key->orderPartials().insertPartial(OrderPartial(key, partialAlpha, order)); // TODO qcommand
+            m_undoStack->push(new AddOrderPartial(this, layerIdx, currentFrame, OrderPartial(key, partialAlpha, order), prevOrder));
+            scrubTo(key->keyframeNumber() + optimalInbetween);
+            m_tabletCanvas->showInfoMessage(QString("Layout change found at frame #%1").arg(key->keyframeNumber() + optimalInbetween), 2000);
+        } else {
+            m_tabletCanvas->showInfoMessage("No layout change found", 2000);
+        }
+    }
+
+    m_toolsManager->setTool(Tool::GroupOrdering);
+
+    // TODO display success/fail text on the canvas?
+}
+
+void Editor::propagateLayoutForward() {
+    int layerIdx = m_layerManager->currentLayerIndex();
+    int currentFrame = m_playbackManager->currentFrame();
+    VectorKeyFrame *key = prevKeyFrame();
+
+    if (key->nextKeyframe() != nullptr) {
+        StopWatch s("Propagate layout forward");
+        GroupOrder order = m_layoutManager->propagateLayoutAtoB(key, key->nextKeyframe());
+        s.stop();
+        key->nextKeyframe()->orderPartials().insertPartial(OrderPartial(key->nextKeyframe(), 0.0, order));
+        m_tabletCanvas->showInfoMessage("Layout propagated forward", 2000);
+    }
+}
+
+void Editor::propagateLayoutBackward() {
+    int layerIdx = m_layerManager->currentLayerIndex();
+    int currentFrame = m_playbackManager->currentFrame();
+    VectorKeyFrame *key = prevKeyFrame();
+
+    if (key->prevKeyframe() != nullptr && key->prevKeyframe() != key) {
+        GroupOrder order = m_layoutManager->propagateLayoutBtoA(key->prevKeyframe(), key);
+        order.debug();
+        key->prevKeyframe()->orderPartials().insertPartial(OrderPartial(key->prevKeyframe(), 0.0, order));
+        m_tabletCanvas->showInfoMessage("Layout propagated backward", 2000);
+    }
+}
+
+void Editor::suggestVisibilityThresholds() {
+    LocalMaskTool *tool = static_cast<LocalMaskTool *>(m_toolsManager->tool(Tool::LocalMask));
+
+    if (!tool->validatingClusters()) {
+        m_undoStack->push(new ComputeVisibilityCommand(this, m_layerManager->currentLayerIndex(), m_playbackManager->currentFrame()));
+        m_toolsManager->setTool(Tool::LocalMask);
+        tool->setValidingCusters(true);
+    } else {
+        tool->setValidingCusters(false);
     }
 }
 

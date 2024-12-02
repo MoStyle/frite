@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "halvestool.h"
 
 #include "group.h"
@@ -17,8 +11,7 @@
 
 #include <QGraphicsSceneMouseEvent>
 
-HalvesTool::HalvesTool(QObject* parent, Editor* editor) : SpacingTool(parent, editor) {
-    m_spacingTool = true;
+HalvesTool::HalvesTool(QObject* parent, Editor* editor) : ChartTool(parent, editor) {
     m_toolTips = QString("Left-click: move a single frame and set halves pattern on the left side | Right-click: move a single frame and set halves pattern on the right side");
 }
 
@@ -27,8 +20,6 @@ HalvesTool::~HalvesTool() {
 }
 
 Tool::ToolType HalvesTool::toolType() const { return Tool::Halves; }
-
-QGraphicsItem* HalvesTool::graphicsItem() { return nullptr; }
 
 QCursor HalvesTool::makeCursor(float scaling) const { return QCursor(Qt::ArrowCursor); }
 

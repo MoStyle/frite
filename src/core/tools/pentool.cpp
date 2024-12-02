@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "pentool.h"
 
 #include "editor.h"
@@ -12,20 +6,8 @@
 #include "tabletcanvas.h"
 #include "utils/geom.h"
 
-#ifdef Q_OS_MAC
-extern "C" {
-void disableCoalescing();
-void enableCoalescing();
-}
-#else
-extern "C" {
-void disableCoalescing() {}
-void enableCoalescing() {}
-}
-#endif
-
 dkFloat k_penSize("Pen->Size", 6, 1, 2000, 1);
-dkFloat k_penFalloffMin("Pen->Weight falloff min bound", 0.3, 0.1, 1.0, 0.05);
+dkFloat k_penFalloffMin("Pen->Weight falloff min bound", 0.1, 0.05, 1.0, 0.05);
 
 PenTool::PenTool(QObject *parent, Editor *editor) : 
     Tool(parent, editor),
@@ -44,10 +26,6 @@ PenTool::~PenTool() {
 
 Tool::ToolType PenTool::toolType() const {
     return Tool::Pen;
-}
-
-QGraphicsItem *PenTool::graphicsItem() {
-    return nullptr;
 }
 
 QCursor PenTool::makeCursor(float scaling) const {
@@ -74,27 +52,39 @@ void PenTool::pressed(const EventInfo& info) {
     m_pen.setWidthF(k_penSize);
     m_pen.setColor(m_editor->color()->frontColor());
     m_currentStroke = std::make_shared<Stroke>(info.key->pullMaxStrokeIdx(), m_editor->color()->frontColor(), k_penSize, false);
-    m_curTime = clock();
-    double timeElapsed = double(m_curTime - m_startTime) / double(CLOCKS_PER_SEC);
-    Point *point = new Point(info.pos.x(), info.pos.y(), timeElapsed, Geom::smoothstep(info.pressure) * (1.0f - k_penFalloffMin) + k_penFalloffMin);
-    m_currentStroke->addPoint(point);
-    disableCoalescing();
+    addPoint(info);
     m_pressed = true;
 }
 
 void PenTool::moved(const EventInfo& info) {
-    if (!m_pressed || !m_editor->tabletCanvas()->canvasRect().contains(QPoint(info.pos.x(), info.pos.y())) || info.pos == info.lastPos || !(info.mouseButton & Qt::LeftButton)) return;
-    m_curTime = clock();
-    double timeElapsed = double(m_curTime - m_startTime) / double(CLOCKS_PER_SEC);
-    Point *point = new Point(info.pos.x(), info.pos.y(), timeElapsed,  Geom::smoothstep(info.pressure) * (1.0f - k_penFalloffMin) + k_penFalloffMin);
-    // if (isnan((double)point->pos().x()) || isnan((double)point->pos().y())) qDebug() << "Error: Nan in PenTool";
-    m_currentStroke->addPoint(point);
+    if (!m_pressed || !m_editor->tabletCanvas()->canvasRect().contains(QPoint(info.pos.x(), info.pos.y())) || info.pos == info.lastPos || info.pressure == 0.0 || !(info.mouseButton & Qt::LeftButton)) return;
+    addPoint(info);
 }
 
 void PenTool::released(const EventInfo& info){
-    if (!m_pressed || m_currentStroke->size() < 2 || m_currentStroke->length() < 1e-3 || !(info.mouseButton & Qt::LeftButton)) return;
-    m_editor->addStroke(m_currentStroke);
+    if (!m_pressed) return;
+
+    if (m_editor->tabletCanvas()->canvasRect().contains(QPoint(info.pos.x(), info.pos.y())) && info.pos != info.lastPos) {
+        addPoint(info);
+    }
+
+    if (m_currentStroke->size() >= 2 && m_currentStroke->length() > 1e-3) { // TODO adaptative constant based on current view?
+        m_editor->addStroke(m_currentStroke);
+    }
+
+    if (QOpenGLContext::currentContext() != m_editor->tabletCanvas()->context()) m_editor->tabletCanvas()->makeCurrent();
+    m_currentStroke->destroyBuffers();
     m_currentStroke.reset<Stroke>(nullptr);
-    enableCoalescing();
     m_pressed = false;
+}
+
+void PenTool::wheel(const WheelEventInfo& info) {
+    if (info.delta > 0) k_penSize.setValue(k_penSize + 0.5);
+    else                k_penSize.setValue(k_penSize - 0.5);
+    m_editor->tabletCanvas()->updateCursor();
+}
+
+void PenTool::addPoint(const EventInfo &info) {
+    m_curTime = clock();
+    m_currentStroke->addPoint(new Point(info.pos.x(), info.pos.y(), double(m_curTime - m_startTime) / double(CLOCKS_PER_SEC),  Geom::smoothconc(info.pressure) * (1.0f - k_penFalloffMin) + k_penFalloffMin));
 }

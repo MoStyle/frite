@@ -1,11 +1,15 @@
-/*
- * SPDX-FileCopyrightText: 2010 Forrester Cole (fcole@cs.princeton.edu)
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
+/*****************************************************************************\
 
+DialsAndKnobs.cc
+Author: Forrester Cole (fcole@cs.princeton.edu)
+Copyright (c) 2010 Forrester Cole
+
+An easy and simple way to expose variables in a Qt UI.
+
+demoutils is distributed under the terms of the GNU General Public License.
+See the COPYING file for details.
+
+\*****************************************************************************/
 #include <assert.h>
 #include <QtWidgets>
 
@@ -166,7 +170,7 @@ void dkFloat::setValue(double f)
 {
     if (_value != f)
     {
-        _value = f;
+        _value = std::clamp(f, _lower, _upper);
         _last_change_frame_number = DialsAndKnobs::frameCounter();
         
         emit valueChanged(_value);
@@ -232,7 +236,7 @@ void dkInt::setValue(int i)
 {
     if (_value != i)
     {
-        _value = i;
+        _value = std::clamp(i, _lower, _upper);
         _last_change_frame_number = DialsAndKnobs::frameCounter();
         emit valueChanged(_value);
     }
@@ -558,7 +562,7 @@ void dkSlider::setValue(int i)
 {
     if (_value != i)
     {
-        _value = i;
+        _value = std::clamp(i, _lower, _upper);
         _last_change_frame_number = DialsAndKnobs::frameCounter();
         emit valueChanged(_value);
     }

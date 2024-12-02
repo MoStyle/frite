@@ -1,9 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "canvasview.h"
 #include "tabletcanvas.h"
 #include "editor.h"
@@ -45,7 +39,6 @@ void CanvasView::mousePressEvent(QMouseEvent *event) {
 
 void CanvasView::mouseMoveEvent(QMouseEvent *event) {
     QGraphicsView::mouseMoveEvent(event);
-    // qDebug() << "move event accepted (view) ? " << event->isAccepted();
     event->ignore();
 }
 
@@ -58,6 +51,8 @@ void CanvasView::wheelEvent(QWheelEvent *event) {
     QGraphicsView::wheelEvent(event);
     if (!event->isAccepted()) {
         event->ignore();
+    } else {
+        update();
     }
 }
 
@@ -66,4 +61,8 @@ void CanvasView::tabletEvent(QTabletEvent *event) {
     if (!event->isAccepted()) {
         event->ignore();
     }
+}
+
+bool CanvasView::event(QEvent *event) {
+    return QGraphicsView::event(event);
 }

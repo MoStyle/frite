@@ -1,10 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef GROUP_H
 #define GROUP_H
 
@@ -18,20 +11,21 @@
 #include <QRect>
 #include <QTransform>
 #include <QHash>
+#include <QOpenGLShaderProgram>
 #include <functional>
 
 #include "point.h"
 #include "polyline.h"
 #include "strokeinterval.h"
 #include "lattice.h"
+#include "keyframedparams.h"
 #include "uvhash.h"
-#include "cubic.h"
+#include "bezier2D.h"
+#include "partial.h"
 
 enum GroupType : unsigned int { PRE, POST, MAIN };
 
 class VectorKeyFrame;
-class KeyframedTransform;
-class KeyframedFloat;
 class Editor;
 
 class Group {
@@ -46,27 +40,33 @@ class Group {
     void load(QDomNode &groupNode);
     void save(QDomDocument &doc, QDomElement &groupsElt) const;
     void update();
-    void makeBreakdown(VectorKeyFrame *newKeyframe, VectorKeyFrame *nextKeyframe, Group *breakdown, int inbetween, float linearAlpha, const Point::Affine &rigidTransform, const QHash<int, int> &backwardStrokesMap, Editor *editor);
+    void makeBreakdown(VectorKeyFrame *newKeyframe, VectorKeyFrame *nextKeyframe, Group *breakdown, int inbetween, qreal linearAlpha, const Point::Affine &rigidTransform, const QHash<int, int> &backwardStrokesMap, Editor *editor);
+    void clear();
 
     // Strokes
     Intervals &addStroke(int id, Intervals intervals);      // override current value
     Interval &addStroke(int id, Interval interval);         // append
     Interval &addStroke(int id);                            // override current value
     void clearStrokes();
-    void clearStrokes(int strokeId);
-    const StrokeIntervals &strokes() const { return m_strokes; }
-    StrokeIntervals &strokes() { return m_strokes; }
-    size_t size() const { return m_strokes.size(); }
-    int nbPoints() const { return m_strokes.nbPoints(); }
-    bool contains(int strokeId) const { return m_strokes.contains(strokeId); }
+    void clearStrokes(unsigned int strokeId, bool updateLattice=true);
+    void clearStrokes(unsigned int strokeId, unsigned int partialId, bool updateLattice=true);
+    const StrokeIntervals &strokes() const { return m_drawingPartials.firstPartial().strokes(); }
+    StrokeIntervals &strokes() { return m_drawingPartials.firstPartial().strokes(); }
+    StrokeIntervals &strokes(double t) { return m_drawingPartials.lastPartialAt(t).strokes(); }
+    Partials<DrawingPartial> &drawingPartials() { return m_drawingPartials; }
+    size_t size(double t=0.0) const { return m_drawingPartials.constLastPartialAt(t).strokes().size(); }
+    int nbPoints(double t=0.0) const { return m_drawingPartials.constLastPartialAt(t).strokes().nbPoints(); }
+    bool contains(unsigned int strokeId) const;
+    bool contains(unsigned int strokeId, double t) const { return m_drawingPartials.constLastPartialAt(t).strokes().contains(strokeId); }
     void updateBuffers() const;
 
     // Drawing stuff
-    void drawWithoutGrid(QPainter &painter, QPen &pen, float alpha, float tintFactor, const QColor &tint, bool useGroupColor=false);
+    void drawMask(QOpenGLShaderProgram *program, int inbetween, qreal alpha, QColor color);
+    void drawWithoutGrid(QPainter &painter, QPen &pen, qreal alpha, float tintFactor, const QColor &tint, bool useGroupColor=false);
     void drawGrid(QPainter &painter, int inbetween, PosTypeIndex type=TARGET_POS);
     void drawHull(QPainter &painter) const;
     void drawBbox(QPainter &painter) const;
-    float crossFadeValue(float alpha, bool forward);
+    qreal crossFadeValue(qreal alpha, bool forward);
 
     // bounding box
     void recomputeBbox();
@@ -89,19 +89,29 @@ class Group {
     void setBreakdown(bool breakdown);
     bool disappear() const { return m_disappear; }
     void setDisappear(bool disappear) { m_disappear = disappear; }
+    bool isSticker() const { return m_sticker; }
+    void setSticker(bool sticker) { m_sticker = sticker; }
+    void setGridDirty();
     void syncTargetPosition(VectorKeyFrame *next);
     void syncSourcePosition(VectorKeyFrame *prev);
     void syncSourcePosition();
+    Mask *mask() const { return m_mask.get(); }
 
     // interpolation transform
-    KeyframedFloat *spacing() { return m_spacing; }
-    KeyframedFloat *prevSpacing() { return m_prevSpacing; }
-    void setSpacing(KeyframedFloat *spacing);
+    KeyframedReal *spacing() { return m_spacing; }
+    KeyframedReal *prevSpacing() { return m_prevSpacing; }
+    void setSpacing(KeyframedReal *spacing);
     Point::Affine forwardTransform(qreal linear_alpha, bool useSpacingIndirection = true);
     Point::Affine backwardTransform(qreal linear_alpha);
     qreal spacingAlpha(qreal alpha);
     void computeSpacingProxy(Bezier2D &proxy) const;
     void transform(const Point::Affine &transform);
+    Point::Affine rigidTransform(qreal t) const;
+    KeyframedVector * getPivot() const { return m_pivot; }
+    KeyframedVector * getTranslation() const { return &(m_transform->translation); }
+    KeyframedReal * getRotation() const { return &(m_transform->rotation); }
+    Point::Affine globalRigidTransform(qreal t) const;
+    void applyRotation(float angle, qreal t);
     double motionEnergy() const;
     double motionEnergyStart() const;
     double motionEnergyEnd() const;
@@ -164,14 +174,18 @@ class Group {
 
     VectorKeyFrame *m_parentKeyframe;
 
-    StrokeIntervals m_strokes;  // map strokes id to a list of idx intervals, qhash is supposedly faster than std::map
+    //StrokeIntervals m_strokes;  // map strokes id to a list of idx intervals, qhash is supposedly faster than std::map
+    Partials<DrawingPartial> m_drawingPartials;
 
     // Misc. properties and bounds
     QColor m_color, m_initColor;
     QRectF m_bbox;
 
     // interpolation transform
-    KeyframedFloat *m_spacing, *m_prevSpacing;
+    KeyframedReal *m_spacing, *m_prevSpacing;
+
+    KeyframedVector *m_pivot;              // center of rotation of the drawing
+    KeyframedTransform *m_transform;        // rigid transform of the drawing
 
     // lattice
     std::shared_ptr<Lattice> m_grid;
@@ -179,7 +193,12 @@ class Group {
     bool m_showGrid;        // true if the lattice can be displayed
     bool m_breakdown;
     bool m_disappear;
+    bool m_sticker;
     int m_prevPreGroupId;   // only valid if m_type == POST, cache for VectorKeyFrame m_intraCorrespondences
+
+    // Mask
+    std::unique_ptr<Mask> m_mask, m_maskBackward;
+    float m_maskStrength;
 
     // interpolation results
     std::vector<Stroke *> m_origin_strokes;
@@ -190,4 +209,3 @@ class Group {
 };
 
 #endif
-

@@ -1,10 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #include "keycommands.h"
 #include "editor.h"
 #include "layermanager.h"
@@ -22,7 +15,6 @@ AddKeyCommand::AddKeyCommand(Editor* editor, int layer, int frame, QUndoCommand 
     setText("Add keyframe");
     Layer *l = m_editor->layers()->layerAt(m_layer); 
     if (m_frame_redo != l->getMaxKeyFramePosition() && l->keyExists(m_frame_redo)) {
-        qDebug() << "key exists";
         m_prevFrameCopy = l->getVectorKeyFrameAtFrame(m_frame_redo)->copy();
     }
 }
@@ -61,7 +53,7 @@ void AddKeyCommand::redo()
     m_editor->timelineUpdate(m_frame_redo);
 }
 
-AddBreakdownCommand::AddBreakdownCommand(Editor* editor, int layer, int prevFrame, int breakdownFrame, float alpha, QUndoCommand *parent)
+AddBreakdownCommand::AddBreakdownCommand(Editor* editor, int layer, int prevFrame, int breakdownFrame, qreal alpha, QUndoCommand *parent)
     : QUndoCommand(parent)
     , m_editor(editor)
     , m_layer(layer)
@@ -96,7 +88,7 @@ void AddBreakdownCommand::redo() {
     int inbetween = layer->inbetweenPosition(m_breakdownFrame);
     VectorKeyFrame *prevKey = layer->getVectorKeyFrameAtFrame(m_prevFrame);
     VectorKeyFrame *nextKey = layer->getNextKey(m_prevFrame);
-    Inbetween inbetweenCopy = prevKey->inbetweens()[inbetween - 1];
+    Inbetween inbetweenCopy = prevKey->inbetweens()[inbetween];
     m_breakdownFrame = m_editor->addKeyFrame(m_layer, m_breakdownFrame, false);
     VectorKeyFrame *breakdownKey = layer->getVectorKeyFrameAtFrame(m_breakdownFrame);
     m_prevFrameCopy = prevKey->copy();
@@ -136,6 +128,132 @@ void RemoveKeyCommand::redo()
     Layer* layer = m_editor->layers()->layerAt(m_layerIndex);
     m_keyframe = layer->getVectorKeyFrameAtFrame(m_frame)->copy();
     layer->removeKeyFrame(m_frame);
+    m_editor->timelineUpdate(m_frame);
+}
+
+PasteKeysCommand::PasteKeysCommand(Editor * editor, int layer, int frame, float pivotTranslationFactor, QUndoCommand * parent)
+    : QUndoCommand(parent)
+    , m_editor(editor)
+    , m_layerIndex(layer)
+    , m_frame(frame)
+    , m_pivotTranslationFactor(pivotTranslationFactor)
+    , m_toPivot(0, 0)
+{
+    Layer * l = m_editor->layers()->layerAt(m_layerIndex);
+    m_lastFrame = l->getMaxKeyFramePosition();
+    for (VectorKeyFrame * initialKey : l->getSelectedKeyFrames()){
+        int initialKeyIdx = l->getVectorKeyFramePosition(initialKey);
+        m_selectedKeyFramesIdx.append(initialKeyIdx);
+    }
+    setText("Paste keyFrames");
+}
+PasteKeysCommand::~PasteKeysCommand(){
+}
+
+void PasteKeysCommand::undo(){
+    Layer * layer = m_editor->layers()->layerAt(m_layerIndex);
+    for (int frame : m_newKeyFramesIdx){
+        layer->removeKeyFrame(frame);
+        m_editor->timelineUpdate(frame);
+    }
+    m_newKeyFramesIdx.clear();
+
+    if (layer->getMaxKeyFramePosition() != m_lastFrame){
+        QList<int> keyFrameIndices = layer->keys();
+        bool sign = m_offset >= 0;
+        auto moveKeyFrames = [&](int &key){if(key >= m_frame) layer->moveKeyFrame(key, key - m_offset); };
+        if (sign)
+            std::for_each(keyFrameIndices.begin(), keyFrameIndices.end(), moveKeyFrames);
+        else
+            std::for_each(keyFrameIndices.rbegin(), keyFrameIndices.rend(), moveKeyFrames);
+        m_editor->timelineUpdate(m_lastFrame);
+    }
+}
+void PasteKeysCommand::redo(){
+    Layer * layer = m_editor->layers()->layerAt(m_layerIndex);
+
+    // VectorKeyFrame * lastSelected = layer->getVectorKeyFrameAtFrame(*(m_selectedKeyFramesIdx.end() - 1));
+    // KeyframedVector * translation = lastSelected->translation();
+    // translation->frameChanged(1);
+    int nextFrame = layer->getNextKeyFramePosition(*(m_selectedKeyFramesIdx.end() - 1));
+    m_toPivot = layer->getPivotPosition(nextFrame);
+    // VectorKeyFrame * firstSelected = layer->getVectorKeyFrameAtFrame(*m_selectedKeyFramesIdx.begin());
+    // translation = firstSelected->translation();
+    // translation->frameChanged(0);
+    // m_toPivot -= translation->get();
+    m_toPivot -= layer->getPivotPosition(*(m_selectedKeyFramesIdx.begin()));
+    m_toPivot *= m_pivotTranslationFactor;    
+
+    if (layer->getMaxKeyFramePosition() <= m_frame){
+        int offset = 0;
+        bool first = true;
+        for (int initialKeyIdx : m_selectedKeyFramesIdx){
+            VectorKeyFrame * initialKey = layer->getVectorKeyFrameAtFrame(initialKeyIdx);
+            int lastKeyFramePosition = layer->getMaxKeyFramePosition();
+
+            // added empty keyFrame if newFrame doesn't corrospond to lastKeyFrame
+            if (lastKeyFramePosition != m_frame + offset){
+                layer->moveKeyFrame(lastKeyFramePosition, lastKeyFramePosition + 1);
+                layer->addNewEmptyKeyAt(lastKeyFramePosition);
+                m_newKeyFramesIdx.prepend(lastKeyFramePosition);
+                lastKeyFramePosition++;
+            }
+            int frame = m_frame + offset;
+            layer->moveKeyFrame(lastKeyFramePosition, frame + layer->stride(initialKeyIdx));
+            layer->insertKeyFrame(frame, initialKey->copy());
+
+            if (initialKey->isTranslationExtracted()){
+                // pivot translation
+                Point::VectorType point = layer->getPivotControlPoint(initialKeyIdx);
+                layer->addPointToPivotCurve(frame, point);
+                layer->getVectorKeyFrameAtFrame(frame)->setPivotCurve(layer->getPivotCurves()->getBezier(layer->getFrameTValue(frame)));
+
+                layer->addVectorKeyFrameTranslation(frame, m_toPivot, !first);
+            }
+
+            m_newKeyFramesIdx.prepend(frame);
+            offset += layer->stride(initialKeyIdx);
+            first = false;
+        }
+        int lastKeyFramePosition = layer->getMaxKeyFramePosition();
+        // TODO : find a more convenient way to move the lastKeyFrame position and update its previous keyframe pivot
+        layer->addVectorKeyFrameTranslation(lastKeyFramePosition, m_toPivot);
+        layer->addVectorKeyFrameTranslation(lastKeyFramePosition, -m_toPivot, false);
+        layer->addVectorKeyFrameTranslation(lastKeyFramePosition, m_toPivot / m_pivotTranslationFactor, false);
+
+        m_offset = offset;
+    }
+    else{
+        int offset = 0;
+        std::vector<VectorKeyFrame *> initialKeyFrames;
+        if (!layer->keyExists(m_frame))
+            offset = -(layer->getNextKeyFramePosition(m_frame) - m_frame);
+        for (int initialKeyIdx : m_selectedKeyFramesIdx){
+            VectorKeyFrame * keyFrame = layer->getVectorKeyFrameAtFrame(initialKeyIdx);
+            initialKeyFrames.push_back(keyFrame);
+            offset += layer->stride(layer->getVectorKeyFramePosition(keyFrame)); 
+        }
+        m_offset = offset;
+
+        QList<int> keyFrameIndices = layer->keys();
+        bool sign = m_offset >= 0;
+        auto moveKeyFrames = [&](int &key){ if(key >= m_frame) layer->moveKeyFrame(key, key + offset); };
+        if (sign)
+            std::for_each(keyFrameIndices.rbegin(), keyFrameIndices.rend(), moveKeyFrames);
+        else
+            std::for_each(keyFrameIndices.begin(), keyFrameIndices.end(), moveKeyFrames);
+
+        offset = 0;
+        for(VectorKeyFrame * initialKeyFrame : initialKeyFrames){
+            layer->insertKeyFrame(m_frame + offset, initialKeyFrame->copy());
+            m_newKeyFramesIdx.prepend(m_frame + offset);
+            offset += layer->stride(layer->getVectorKeyFramePosition(initialKeyFrame));
+        }
+    }
+    for (auto it = layer->keysBegin(); it != layer->keysEnd(); ++it){
+        int frame = it.key();
+        layer->getVectorKeyFrameAtFrame(frame)->updateTransforms();
+    }
     m_editor->timelineUpdate(m_frame);
 }
 

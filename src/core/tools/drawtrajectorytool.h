@@ -1,14 +1,8 @@
-/*
- * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
- *
- * SPDX-License-Identifier: CECILL-2.1
- */
-
 #ifndef __DRAWTRAJECTORYTOOL_H__
 #define __DRAWTRAJECTORYTOOL_H__
 
 #include "trajectorytool.h"
-#include "cubic.h"
+#include "bezier2D.h"
 
 class Group;
 
@@ -20,8 +14,6 @@ public:
 
     Tool::ToolType toolType() const override;
 
-    QGraphicsItem *graphicsItem() override;
-
     QCursor makeCursor(float scaling=1.0f) const override;
     
     void toggled(bool on) override;
@@ -30,7 +22,7 @@ public:
     void released(const EventInfo& info) override;
     void doublepressed(const EventInfo& info) override;
     void wheel(const WheelEventInfo& info) override;
-    void draw(QPainter &painter, VectorKeyFrame *key) override;
+    void drawUI(QPainter &painter, VectorKeyFrame *key) override;
 
 private:
     std::vector<Point::VectorType> m_points;
