@@ -1,3 +1,15 @@
+/*
+ * SPDX-FileCopyrightText: 2021-2024 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ */
+
+/*
+ * SPDX-FileCopyrightText: 2021-2024 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ */
+
 #ifndef __HANDTOOL_H__
 #define __HANDTOOL_H__
 

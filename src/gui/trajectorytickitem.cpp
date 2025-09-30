@@ -1,4 +1,10 @@
- #include "trajectorytickitem.h"
+/*
+ * SPDX-FileCopyrightText: 2021-2024 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ */
+
+#include "trajectorytickitem.h"
 
 #include "trajectory.h"
 #include "group.h"

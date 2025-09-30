@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2021-2024 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ */
+
 #include "fixedscenemanager.h"
 #include "editor.h"
 #include "tools/tool.h"

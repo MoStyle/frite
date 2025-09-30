@@ -1,10 +1,13 @@
+/*
+ * SPDX-FileCopyrightText: 2021-2024 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ */
+
 #ifndef QTEIGEN_H
 #define QTEIGEN_H
 
 #include "point.h"
-
-// #include <Eigen/Geometry>
-// #include <QPoint>
 
 // QE: QT to Eigen
 // EQ: Eigen to QT

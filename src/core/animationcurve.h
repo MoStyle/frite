@@ -1,11 +1,11 @@
-// This file is part of Gratin, a node-based compositing software
-// for 2D and 3D animations.
-//
-// Copyright (C) 2013 Romain Vergne <romain.vergne@inria.fr>
-//
-// This Source Code Form is subject to the terms of the Mozilla
-// Public License v. 2.0. If a copy of the MPL was not distributed
-// with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+/*
+ * SPDX-FileCopyrightText: 2013 Romain Vergne <romain.vergne@inria.fr>
+ * SPDX-FileCopyrightText: 2020-2023 Pierre Benard <pierre.g.benard@inria.fr>
+ * SPDX-FileCopyrightText: 2021-2024 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ * SPDX-License-Identifier: MPL-2.0
+ */
 
 #ifndef CURVE
 #define CURVE

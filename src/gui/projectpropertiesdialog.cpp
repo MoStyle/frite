@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ */
+
 #include "projectpropertiesdialog.h"
 
 #include <QSpinBox>

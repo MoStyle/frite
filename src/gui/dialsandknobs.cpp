@@ -1,15 +1,11 @@
-/*****************************************************************************\
+/*
+ * SPDX-FileCopyrightText: 2013-2018 Matt Chiawen Chang
+ * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
 
-DialsAndKnobs.cc
-Author: Forrester Cole (fcole@cs.princeton.edu)
-Copyright (c) 2010 Forrester Cole
-
-An easy and simple way to expose variables in a Qt UI.
-
-demoutils is distributed under the terms of the GNU General Public License.
-See the COPYING file for details.
-
-\*****************************************************************************/
 #include <assert.h>
 #include <QtWidgets>
 

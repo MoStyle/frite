@@ -1,3 +1,11 @@
+/*
+ * SPDX-FileCopyrightText: 2017 Claude Cugerone
+ * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
+ * SPDX-FileCopyrightText: 2021-2024 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ */
+
 #include "arap.h"
 #include "lattice.h"
 #include "layer.h"

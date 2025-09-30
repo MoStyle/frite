@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2021-2024 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ */
+
 #include "bezier2D.h"
 #include "utils/utils.h"
 #include "utils/geom.h"

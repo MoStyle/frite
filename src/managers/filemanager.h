@@ -1,19 +1,12 @@
 /*
-
-Pencil - Traditional Animation Software
-Copyright (C) 2005-2007 Patrick Corrieri & Pascal Naidon
-Copyright (C) 2013-2014 Matt Chiawen Chang
-
-This program is free software; you can redistribute it and/or
-modify it under the terms of the GNU General Public License
-as published by the Free Software Foundation;
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-*/
+ * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
+ * SPDX-FileCopyrightText: 2013-2014 Matt Chiawen Chang
+ * SPDX-FileCopyrightText: 2018-2023 Pierre Benard <pierre.g.benard@inria.fr>
+ * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
 
 #ifndef OBJECTSAVELOADER_H
 #define OBJECTSAVELOADER_H

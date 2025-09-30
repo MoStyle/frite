@@ -1,4 +1,10 @@
-#include "visibilitymanager.h"
+/*
+ * SPDX-FileCopyrightText: 2021-2024 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ */
+
+ #include "visibilitymanager.h"
 
 #include "gridmanager.h"
 #include "layermanager.h"

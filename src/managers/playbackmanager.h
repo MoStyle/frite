@@ -1,3 +1,13 @@
+/*
+ * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
+ * SPDX-FileCopyrightText: 2012-2014 Matthew Chiawen Chang
+ * SPDX-FileCopyrightText: 2018-2023 Pierre Benard <pierre.g.benard@inria.fr>
+ * SPDX-FileCopyrightText: 2021-2023 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 #ifndef PLAYBACKMANAGER_H
 #define PLAYBACKMANAGER_H
 

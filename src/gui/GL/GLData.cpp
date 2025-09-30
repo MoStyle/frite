@@ -1,4 +1,10 @@
-#include "GLData.h"
+/*
+ * SPDX-FileCopyrightText: 2021-2024 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ */
+
+ #include "GLData.h"
 
 #include "vectorkeyframe.h"
 #include "utils/stopwatch.h"

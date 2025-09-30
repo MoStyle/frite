@@ -1,3 +1,12 @@
+/*
+ * SPDX-FileCopyrightText: 2005-2007 Patrick Corrieri & Pascal Naidon
+ * SPDX-FileCopyrightText: 2013-2014 Matt Chiawen Chang
+ * SPDX-FileCopyrightText: 2017-2023 Pierre Benard <pierre.g.benard@inria.fr>
+ * SPDX-FileCopyrightText: 2021-2024 Melvin Even <melvin.even@inria.fr>
+ *
+ * SPDX-License-Identifier: CECILL-2.1
+ */
+
 #include "editor.h"
 
 #include <Eigen/Geometry>
